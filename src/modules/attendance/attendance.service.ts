@@ -1,0 +1,152 @@
+import { DateTime } from "luxon";
+import { prisma } from "../../database/prisma.js";
+import { AppError } from "../../shared/errors/app-error.js";
+
+type LocationInput = { latitude: number; longitude: number; accuracyMeters: number; capturedAt: Date };
+type CheckInInput = LocationInput & { idempotencyKey: string; lateReasonType?: string; lateReasonDescription?: string };
+type CheckOutInput = LocationInput & { idempotencyKey: string; workDescription: string };
+
+type GeoResult = { distance_meters: number; inside_radius: boolean };
+
+function scheduledInstant(workDate: string, hhmm: string, timezone: string) {
+  const dt = DateTime.fromISO(`${workDate}T${hhmm}:00`, { zone: timezone });
+  if (!dt.isValid) throw new AppError(500, "INVALID_SCHEDULE_TIME", "Configured schedule time or timezone is invalid");
+  return dt;
+}
+
+async function employeeContext(userId: string) {
+  const employee = await prisma.employee.findUnique({
+    where: { userId }, include: { user: true, office: true, schedule: true }
+  });
+  if (!employee || employee.status !== "ACTIVE" || employee.user.status !== "ACTIVE") throw new AppError(403, "EMPLOYEE_INACTIVE", "Active employee account required");
+  if (!employee.office || !employee.office.isActive) throw new AppError(400, "OFFICE_NOT_ASSIGNED", "An active office assignment is required");
+  if (!employee.schedule || !employee.schedule.isActive) throw new AppError(400, "SCHEDULE_NOT_ASSIGNED", "An active work schedule is required");
+  return employee;
+}
+
+function validateCapturedAt(capturedAt: Date, serverTime: Date) {
+  const ageMs = serverTime.getTime() - capturedAt.getTime();
+  if (ageMs > 5 * 60_000 || ageMs < -2 * 60_000) throw new AppError(422, "STALE_LOCATION", "Location must be captured near the time of the attendance request");
+}
+
+async function geofence(input: LocationInput, office: { latitude: unknown; longitude: unknown; allowedRadiusMeters: number; maximumAccuracyMeters: number }) {
+  if (input.accuracyMeters > office.maximumAccuracyMeters) throw new AppError(422, "LOCATION_ACCURACY_TOO_LOW", `Location accuracy must be within ${office.maximumAccuracyMeters} meters`);
+  const rows = await prisma.$queryRaw<GeoResult[]>`
+    SELECT
+      ST_DistanceSphere(
+        ST_SetSRID(ST_MakePoint(${input.longitude}, ${input.latitude}), 4326),
+        ST_SetSRID(ST_MakePoint(${Number(office.longitude)}, ${Number(office.latitude)}), 4326)
+      ) AS distance_meters,
+      ST_DWithin(
+        ST_SetSRID(ST_MakePoint(${input.longitude}, ${input.latitude}), 4326)::geography,
+        ST_SetSRID(ST_MakePoint(${Number(office.longitude)}, ${Number(office.latitude)}), 4326)::geography,
+        ${office.allowedRadiusMeters}
+      ) AS inside_radius
+  `;
+  const result = rows[0];
+  if (!result) throw new AppError(500, "GEOFENCE_FAILED", "Unable to validate office location");
+  return { distanceMeters: Number(result.distance_meters), insideRadius: result.inside_radius };
+}
+
+function attendanceClock(employee: Awaited<ReturnType<typeof employeeContext>>, now: Date) {
+  const zone = employee.office!.timezone || employee.schedule!.timezone;
+  const localNow = DateTime.fromJSDate(now, { zone });
+  const workDate = localNow.toISODate()!;
+  const weekday = localNow.weekday;
+  if (!employee.schedule!.workingDays.includes(weekday)) throw new AppError(409, "NOT_A_WORKING_DAY", "Today is not configured as a working day");
+  let scheduledIn = scheduledInstant(workDate, employee.schedule!.checkInTime, zone);
+  let scheduledOut = scheduledInstant(workDate, employee.schedule!.checkOutTime, zone);
+  if (scheduledOut <= scheduledIn) scheduledOut = scheduledOut.plus({ days: 1 });
+  const lateThreshold = scheduledIn.plus({ minutes: employee.schedule!.lateGraceMinutes });
+  const lateMinutes = Math.max(0, Math.floor(localNow.diff(lateThreshold, "minutes").minutes));
+  return { zone, workDate, scheduledIn, scheduledOut, lateMinutes, isLate: lateMinutes > 0 };
+}
+
+export const attendanceService = {
+  async current(userId: string) {
+    const employee = await employeeContext(userId);
+    return prisma.timesheet.findFirst({ where: { employeeId: employee.id, isOpen: true }, include: { lateReason: true, locations: true } });
+  },
+
+  async preview(userId: string, input: LocationInput) {
+    const employee = await employeeContext(userId);
+    const open = await prisma.timesheet.findFirst({ where: { employeeId: employee.id, isOpen: true }, select: { id: true } });
+    if (open) throw new AppError(409, "ALREADY_CHECKED_IN", "Employee already has an open timesheet");
+    const now = new Date();
+    validateCapturedAt(input.capturedAt, now);
+    const clock = attendanceClock(employee, now);
+    const geo = await geofence(input, employee.office!);
+    return { ...geo, isLate: clock.isLate, lateMinutes: clock.lateMinutes, requiresLateReason: clock.isLate, workDate: clock.workDate, serverTime: now };
+  },
+
+  async checkIn(userId: string, input: CheckInInput) {
+    const employee = await employeeContext(userId);
+    const existing = await prisma.timesheet.findUnique({ where: { checkInIdempotencyKey: input.idempotencyKey }, include: { lateReason: true, locations: true } });
+    if (existing) {
+      if (existing.employeeId !== employee.id) throw new AppError(409, "IDEMPOTENCY_KEY_CONFLICT", "Idempotency key is already in use");
+      return existing;
+    }
+    const now = new Date();
+    validateCapturedAt(input.capturedAt, now);
+    const clock = attendanceClock(employee, now);
+    const geo = await geofence(input, employee.office!);
+    if (!geo.insideRadius) throw new AppError(422, "OUTSIDE_OFFICE_RADIUS", "Check-in is outside the allowed office radius");
+    if (clock.isLate && !input.lateReasonType) throw new AppError(422, "LATE_REASON_REQUIRED", "A late reason is required");
+    if (!clock.isLate && (input.lateReasonType || input.lateReasonDescription)) throw new AppError(422, "LATE_REASON_NOT_ALLOWED", "A late reason is only accepted for late check-in");
+
+    return prisma.$transaction(async (tx) => {
+      const open = await tx.timesheet.findFirst({ where: { employeeId: employee.id, isOpen: true }, select: { id: true } });
+      if (open) throw new AppError(409, "ALREADY_CHECKED_IN", "Employee already has an open timesheet");
+      const timesheet = await tx.timesheet.create({
+        data: {
+          employeeId: employee.id, officeId: employee.office!.id, scheduleId: employee.schedule!.id,
+          workDate: DateTime.fromISO(clock.workDate, { zone: clock.zone }).startOf("day").toJSDate(),
+          scheduledCheckIn: clock.scheduledIn.toUTC().toJSDate(), scheduledCheckOut: clock.scheduledOut.toUTC().toJSDate(), actualCheckIn: now,
+          lateMinutes: clock.lateMinutes, isLate: clock.isLate, status: clock.isLate ? "PRESENT_LATE" : "PRESENT_ON_TIME",
+          checkInIdempotencyKey: input.idempotencyKey,
+          scheduleCheckInTime: employee.schedule!.checkInTime, scheduleCheckOutTime: employee.schedule!.checkOutTime,
+          scheduleLateGraceMinutes: employee.schedule!.lateGraceMinutes,
+          officeLatitude: employee.office!.latitude, officeLongitude: employee.office!.longitude,
+          officeAllowedRadiusMeters: employee.office!.allowedRadiusMeters, officeMaximumAccuracyMeters: employee.office!.maximumAccuracyMeters,
+          timezone: clock.zone,
+          locations: { create: { type: "CHECK_IN", latitude: input.latitude, longitude: input.longitude, accuracyMeters: input.accuracyMeters, distanceFromOfficeMeters: geo.distanceMeters, allowedRadiusMeters: employee.office!.allowedRadiusMeters, isInsideRadius: true, capturedAt: input.capturedAt, serverReceivedAt: now } },
+          ...(clock.isLate ? { lateReason: { create: { employeeId: employee.id, reasonType: input.lateReasonType!, reasonDescription: input.lateReasonDescription, submittedAt: now } } } : {})
+        }, include: { lateReason: true, locations: true }
+      });
+      return timesheet;
+    });
+  },
+
+  async checkOut(userId: string, input: CheckOutInput) {
+    const employee = await employeeContext(userId);
+    const existing = await prisma.timesheet.findUnique({ where: { checkOutIdempotencyKey: input.idempotencyKey }, include: { worksheet: true, locations: true } });
+    if (existing) {
+      if (existing.employeeId !== employee.id) throw new AppError(409, "IDEMPOTENCY_KEY_CONFLICT", "Idempotency key is already in use");
+      return existing;
+    }
+    const open = await prisma.timesheet.findFirst({ where: { employeeId: employee.id, isOpen: true } });
+    if (!open) throw new AppError(409, "NO_OPEN_TIMESHEET", "No open timesheet exists");
+    const now = new Date();
+    validateCapturedAt(input.capturedAt, now);
+    const geo = await geofence(input, { latitude: open.officeLatitude, longitude: open.officeLongitude, allowedRadiusMeters: open.officeAllowedRadiusMeters, maximumAccuracyMeters: open.officeMaximumAccuracyMeters });
+    if (!geo.insideRadius) throw new AppError(422, "OUTSIDE_OFFICE_RADIUS", "Checkout is outside the allowed office radius");
+    const workedMinutes = Math.max(0, Math.floor((now.getTime() - open.actualCheckIn.getTime()) / 60000));
+    const earlyCheckoutMinutes = Math.max(0, Math.floor((open.scheduledCheckOut.getTime() - now.getTime()) / 60000));
+    const overtimeMinutes = Math.max(0, Math.floor((now.getTime() - open.scheduledCheckOut.getTime()) / 60000));
+    const completedStatus = open.isLate ? "COMPLETED_LATE" : "COMPLETED_ON_TIME";
+
+    return prisma.$transaction(async (tx) => {
+      const current = await tx.timesheet.findUnique({ where: { id: open.id } });
+      if (!current?.isOpen) throw new AppError(409, "TIMESHEET_ALREADY_CLOSED", "Timesheet is already closed");
+      return tx.timesheet.update({
+        where: { id: open.id }, data: {
+          actualCheckOut: now, workedMinutes, earlyCheckoutMinutes, overtimeMinutes,
+          isEarlyCheckout: earlyCheckoutMinutes > 0, isOpen: false, status: completedStatus,
+          checkOutIdempotencyKey: input.idempotencyKey,
+          locations: { create: { type: "CHECK_OUT", latitude: input.latitude, longitude: input.longitude, accuracyMeters: input.accuracyMeters, distanceFromOfficeMeters: geo.distanceMeters, allowedRadiusMeters: open.officeAllowedRadiusMeters, isInsideRadius: true, capturedAt: input.capturedAt, serverReceivedAt: now } },
+          worksheet: { create: { employeeId: employee.id, workDate: open.workDate, workDescription: input.workDescription, submittedAt: now } }
+        }, include: { worksheet: true, lateReason: true, locations: true }
+      });
+    });
+  }
+};

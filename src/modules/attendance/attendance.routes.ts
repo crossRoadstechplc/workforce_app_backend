@@ -1,0 +1,11 @@
+import { Router } from "express";
+import { authenticate, requireNormalSession, requirePermission } from "../../middleware/authenticate.js";
+import { validate } from "../../shared/validate.js";
+import { checkInSchema, checkOutSchema, previewCheckInSchema } from "./attendance.schemas.js";
+import { checkIn, checkOut, currentAttendance, previewCheckIn } from "./attendance.controller.js";
+export const attendanceRouter = Router();
+attendanceRouter.use(authenticate, requireNormalSession);
+attendanceRouter.get("/current", requirePermission("attendance.view_own"), currentAttendance);
+attendanceRouter.post("/check-in/preview", requirePermission("attendance.check_in"), validate(previewCheckInSchema), previewCheckIn);
+attendanceRouter.post("/check-in", requirePermission("attendance.check_in"), validate(checkInSchema), checkIn);
+attendanceRouter.post("/check-out", requirePermission("attendance.check_out"), validate(checkOutSchema), checkOut);

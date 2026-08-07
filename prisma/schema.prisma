@@ -1,0 +1,285 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  LOCKED
+}
+
+enum EmployeeStatus {
+  ACTIVE
+  INACTIVE
+  TERMINATED
+}
+
+enum TokenType {
+  REFRESH
+}
+
+enum AttendanceStatus {
+  OPEN
+  PRESENT_ON_TIME
+  PRESENT_LATE
+  COMPLETED_ON_TIME
+  COMPLETED_LATE
+  MISSING_CHECKOUT
+}
+
+enum AttendanceLocationType {
+  CHECK_IN
+  CHECK_OUT
+}
+
+enum WorksheetStatus {
+  SUBMITTED
+  REVIEWED
+}
+
+model User {
+  id                 String        @id @default(uuid()) @db.Uuid
+  email              String        @unique
+  passwordHash       String        @map("password_hash")
+  mustChangePassword Boolean       @default(true) @map("must_change_password")
+  status             UserStatus    @default(ACTIVE)
+  lastLoginAt        DateTime?     @map("last_login_at") @db.Timestamptz(6)
+  createdAt          DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+  employee           Employee?
+  userRoles          UserRole[]
+  refreshTokens      RefreshToken[]
+  auditLogs          AuditLog[]    @relation("AuditActor")
+  @@map("users")
+}
+
+model Role {
+  id          String           @id @default(uuid()) @db.Uuid
+  name        String           @unique
+  description String?
+  createdAt   DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  userRoles   UserRole[]
+  permissions RolePermission[]
+  @@map("roles")
+}
+
+model Permission {
+  id          String           @id @default(uuid()) @db.Uuid
+  code        String           @unique
+  description String?
+  createdAt   DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  roles       RolePermission[]
+  @@map("permissions")
+}
+
+model UserRole {
+  userId    String   @map("user_id") @db.Uuid
+  roleId    String   @map("role_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  @@id([userId, roleId])
+  @@map("user_roles")
+}
+
+model RolePermission {
+  roleId      String     @map("role_id") @db.Uuid
+  permissionId String    @map("permission_id") @db.Uuid
+  createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  role        Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission  Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model Office {
+  id                    String     @id @default(uuid()) @db.Uuid
+  name                  String     @unique
+  address               String?
+  latitude              Decimal    @db.Decimal(10, 7)
+  longitude             Decimal    @db.Decimal(10, 7)
+  allowedRadiusMeters   Int        @map("allowed_radius_meters")
+  maximumAccuracyMeters Int        @default(100) @map("maximum_accuracy_meters")
+  timezone              String     @default("Africa/Addis_Ababa")
+  isActive              Boolean    @default(true) @map("is_active")
+  createdAt             DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  employees             Employee[]
+  timesheets            Timesheet[]
+  @@map("offices")
+}
+
+model WorkSchedule {
+  id               String     @id @default(uuid()) @db.Uuid
+  name             String     @unique
+  checkInTime      String     @map("check_in_time")
+  checkOutTime     String     @map("check_out_time")
+  lateGraceMinutes Int        @default(0) @map("late_grace_minutes")
+  workingDays      Int[]      @map("working_days")
+  timezone         String     @default("Africa/Addis_Ababa")
+  isActive         Boolean    @default(true) @map("is_active")
+  createdAt        DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  employees        Employee[]
+  timesheets       Timesheet[]
+  @@map("work_schedules")
+}
+
+model Employee {
+  id                  String         @id @default(uuid()) @db.Uuid
+  userId              String         @unique @map("user_id") @db.Uuid
+  employeeCode        String         @unique @map("employee_code")
+  officeId            String?        @map("office_id") @db.Uuid
+  scheduleId          String?        @map("schedule_id") @db.Uuid
+  firstName           String         @map("first_name")
+  middleName          String?        @map("middle_name")
+  lastName            String         @map("last_name")
+  phone               String?
+  jobTitle            String?        @map("job_title")
+  department          String?
+  employmentStartDate DateTime       @map("employment_start_date") @db.Date
+  status              EmployeeStatus @default(ACTIVE)
+  createdAt           DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+  user                User           @relation(fields: [userId], references: [id], onDelete: Restrict)
+  office              Office?        @relation(fields: [officeId], references: [id], onDelete: SetNull)
+  schedule            WorkSchedule?  @relation(fields: [scheduleId], references: [id], onDelete: SetNull)
+  timesheets           Timesheet[]
+  worksheets           Worksheet[]
+  lateReasons          LateReason[]
+  @@index([officeId])
+  @@index([scheduleId])
+  @@map("employees")
+}
+
+model RefreshToken {
+  id                String    @id @default(uuid()) @db.Uuid
+  userId            String    @map("user_id") @db.Uuid
+  tokenHash         String    @unique @map("token_hash")
+  deviceId          String?   @map("device_id")
+  expiresAt         DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt         DateTime? @map("revoked_at") @db.Timestamptz(6)
+  replacedByTokenId String?   @map("replaced_by_token_id") @db.Uuid
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  lastUsedAt        DateTime? @map("last_used_at") @db.Timestamptz(6)
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId, revokedAt])
+  @@map("refresh_tokens")
+}
+
+model AuditLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  actorUserId String?  @map("actor_user_id") @db.Uuid
+  action      String
+  entityType  String   @map("entity_type")
+  entityId    String   @map("entity_id")
+  oldValues   Json?    @map("old_values")
+  newValues   Json?    @map("new_values")
+  reason      String?
+  ipAddress   String?  @map("ip_address")
+  userAgent   String?  @map("user_agent")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  actor       User?    @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}
+
+
+model Timesheet {
+  id                       String           @id @default(uuid()) @db.Uuid
+  employeeId               String           @map("employee_id") @db.Uuid
+  officeId                 String           @map("office_id") @db.Uuid
+  scheduleId               String           @map("schedule_id") @db.Uuid
+  workDate                  DateTime         @map("work_date") @db.Date
+  scheduledCheckIn          DateTime         @map("scheduled_check_in") @db.Timestamptz(6)
+  scheduledCheckOut         DateTime         @map("scheduled_check_out") @db.Timestamptz(6)
+  actualCheckIn             DateTime         @map("actual_check_in") @db.Timestamptz(6)
+  actualCheckOut            DateTime?        @map("actual_check_out") @db.Timestamptz(6)
+  lateMinutes               Int              @default(0) @map("late_minutes")
+  earlyCheckoutMinutes      Int              @default(0) @map("early_checkout_minutes")
+  workedMinutes             Int              @default(0) @map("worked_minutes")
+  overtimeMinutes           Int              @default(0) @map("overtime_minutes")
+  status                     AttendanceStatus @default(OPEN)
+  isOpen                     Boolean          @default(true) @map("is_open")
+  isLate                     Boolean          @default(false) @map("is_late")
+  isEarlyCheckout            Boolean          @default(false) @map("is_early_checkout")
+  isMissingCheckout          Boolean          @default(false) @map("is_missing_checkout")
+  checkInIdempotencyKey      String            @unique @map("check_in_idempotency_key")
+  checkOutIdempotencyKey     String?           @unique @map("check_out_idempotency_key")
+  scheduleCheckInTime        String            @map("schedule_check_in_time")
+  scheduleCheckOutTime       String            @map("schedule_check_out_time")
+  scheduleLateGraceMinutes   Int               @map("schedule_late_grace_minutes")
+  officeLatitude             Decimal           @map("office_latitude") @db.Decimal(10, 7)
+  officeLongitude            Decimal           @map("office_longitude") @db.Decimal(10, 7)
+  officeAllowedRadiusMeters  Int               @map("office_allowed_radius_meters")
+  officeMaximumAccuracyMeters Int              @map("office_maximum_accuracy_meters")
+  timezone                   String
+  createdAt                  DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                  DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+  employee                   Employee           @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  office                     Office             @relation(fields: [officeId], references: [id], onDelete: Restrict)
+  schedule                   WorkSchedule       @relation(fields: [scheduleId], references: [id], onDelete: Restrict)
+  locations                  AttendanceLocation[]
+  lateReason                 LateReason?
+  worksheet                  Worksheet?
+  @@unique([employeeId, workDate])
+  @@index([employeeId, isOpen])
+  @@index([workDate, status])
+  @@map("timesheets")
+}
+
+model AttendanceLocation {
+  id                       String                 @id @default(uuid()) @db.Uuid
+  timesheetId              String                 @map("timesheet_id") @db.Uuid
+  type                     AttendanceLocationType
+  latitude                 Decimal                @db.Decimal(10, 7)
+  longitude                Decimal                @db.Decimal(10, 7)
+  accuracyMeters           Decimal                @map("accuracy_meters") @db.Decimal(8, 2)
+  distanceFromOfficeMeters Decimal                @map("distance_from_office_meters") @db.Decimal(10, 2)
+  allowedRadiusMeters      Int                    @map("allowed_radius_meters")
+  isInsideRadius           Boolean                @map("is_inside_radius")
+  capturedAt               DateTime               @map("captured_at") @db.Timestamptz(6)
+  serverReceivedAt         DateTime               @map("server_received_at") @db.Timestamptz(6)
+  createdAt                DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  timesheet                Timesheet              @relation(fields: [timesheetId], references: [id], onDelete: Cascade)
+  @@index([timesheetId, type])
+  @@map("attendance_locations")
+}
+
+model LateReason {
+  id                String    @id @default(uuid()) @db.Uuid
+  timesheetId       String    @unique @map("timesheet_id") @db.Uuid
+  employeeId        String    @map("employee_id") @db.Uuid
+  reasonType        String    @map("reason_type")
+  reasonDescription String?   @map("reason_description")
+  submittedAt       DateTime  @map("submitted_at") @db.Timestamptz(6)
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  timesheet         Timesheet @relation(fields: [timesheetId], references: [id], onDelete: Cascade)
+  employee          Employee  @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  @@index([employeeId, submittedAt])
+  @@map("late_reasons")
+}
+
+model Worksheet {
+  id              String          @id @default(uuid()) @db.Uuid
+  timesheetId     String          @unique @map("timesheet_id") @db.Uuid
+  employeeId      String          @map("employee_id") @db.Uuid
+  workDate        DateTime        @map("work_date") @db.Date
+  workDescription String          @map("work_description")
+  status          WorksheetStatus @default(SUBMITTED)
+  submittedAt     DateTime        @map("submitted_at") @db.Timestamptz(6)
+  reviewedBy      String?         @map("reviewed_by") @db.Uuid
+  reviewedAt      DateTime?       @map("reviewed_at") @db.Timestamptz(6)
+  adminComment    String?         @map("admin_comment")
+  createdAt       DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
+  timesheet       Timesheet       @relation(fields: [timesheetId], references: [id], onDelete: Restrict)
+  employee        Employee        @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  @@index([employeeId, workDate])
+  @@map("worksheets")
+}
