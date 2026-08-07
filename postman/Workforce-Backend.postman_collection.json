@@ -1,0 +1,480 @@
+{
+  "info": {
+    "_postman_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "name": "Workforce Backend API",
+    "description": "Local collection for workforce-backend (`http://localhost:4000`).\n\nSuggested order: Health → Login → Change password (if forced) → Offices → Schedules → Employees → Attendance.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:4000" },
+    { "key": "accessToken", "value": "" },
+    { "key": "refreshToken", "value": "" },
+    { "key": "officeId", "value": "" },
+    { "key": "scheduleId", "value": "" },
+    { "key": "employeeId", "value": "" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      { "key": "token", "value": "{{accessToken}}", "type": "string" }
+    ]
+  },
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "GET Health",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/health"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const data = pm.response.json();",
+                  "  if (data.accessToken) pm.collectionVariables.set('accessToken', data.accessToken);",
+                  "  if (data.refreshToken) pm.collectionVariables.set('refreshToken', data.refreshToken);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"login\": \"admin@example.com\",\n  \"password\": \"ChangeMe123!\",\n  \"deviceId\": \"postman\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/login",
+            "description": "Use email or employee code in `login`. Saves access/refresh tokens to collection variables."
+          }
+        },
+        {
+          "name": "Refresh",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const data = pm.response.json();",
+                  "  if (data.accessToken) pm.collectionVariables.set('accessToken', data.accessToken);",
+                  "  if (data.refreshToken) pm.collectionVariables.set('refreshToken', data.refreshToken);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\",\n  \"deviceId\": \"postman\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/refresh"
+          }
+        },
+        {
+          "name": "Change Password",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currentPassword\": \"ChangeMe123!\",\n  \"newPassword\": \"NewPass1234\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/change-password",
+            "description": "New password: min 10 chars, must include upper, lower, and digit."
+          }
+        },
+        {
+          "name": "Me",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/auth/me"
+          }
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/logout"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin Offices",
+      "item": [
+        {
+          "name": "Create Office",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200 || pm.response.code === 201) {",
+                  "  const data = pm.response.json();",
+                  "  const id = data.id || data.office?.id;",
+                  "  if (id) pm.collectionVariables.set('officeId', id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"HQ Addis\",\n  \"address\": \"Bole\",\n  \"latitude\": 9.0105,\n  \"longitude\": 38.7612,\n  \"allowedRadiusMeters\": 100,\n  \"maximumAccuracyMeters\": 50,\n  \"timezone\": \"Africa/Addis_Ababa\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/admin/offices"
+          }
+        },
+        {
+          "name": "List Offices",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/offices?page=1&pageSize=20&isActive=true",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "admin", "offices"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "pageSize", "value": "20" },
+                { "key": "search", "value": "", "disabled": true },
+                { "key": "isActive", "value": "true" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Office",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/admin/offices/{{officeId}}"
+          }
+        },
+        {
+          "name": "Update Office",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"HQ Addis Updated\",\n  \"allowedRadiusMeters\": 120\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/admin/offices/{{officeId}}"
+          }
+        },
+        {
+          "name": "Change Office Status",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"isActive\": false,\n  \"reason\": \"Temporary closure\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/admin/offices/{{officeId}}/status"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin Schedules",
+      "item": [
+        {
+          "name": "Create Schedule",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200 || pm.response.code === 201) {",
+                  "  const data = pm.response.json();",
+                  "  const id = data.id || data.schedule?.id;",
+                  "  if (id) pm.collectionVariables.set('scheduleId', id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Standard Day\",\n  \"checkInTime\": \"09:00\",\n  \"checkOutTime\": \"17:00\",\n  \"lateGraceMinutes\": 15,\n  \"workingDays\": [1, 2, 3, 4, 5],\n  \"timezone\": \"Africa/Addis_Ababa\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/admin/schedules"
+          }
+        },
+        {
+          "name": "List Schedules",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/schedules?page=1&pageSize=20&isActive=true",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "admin", "schedules"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "pageSize", "value": "20" },
+                { "key": "search", "value": "", "disabled": true },
+                { "key": "isActive", "value": "true" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Schedule",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/admin/schedules/{{scheduleId}}"
+          }
+        },
+        {
+          "name": "Update Schedule",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"lateGraceMinutes\": 20,\n  \"checkOutTime\": \"17:30\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/admin/schedules/{{scheduleId}}"
+          }
+        },
+        {
+          "name": "Change Schedule Status",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"isActive\": false,\n  \"reason\": \"Schedule retired\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/admin/schedules/{{scheduleId}}/status"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin Employees",
+      "item": [
+        {
+          "name": "Create Employee",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200 || pm.response.code === 201) {",
+                  "  const data = pm.response.json();",
+                  "  const id = data.id || data.employee?.id;",
+                  "  if (id) pm.collectionVariables.set('employeeId', id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"jane@example.com\",\n  \"employeeCode\": \"EMP001\",\n  \"firstName\": \"Jane\",\n  \"middleName\": null,\n  \"lastName\": \"Doe\",\n  \"phone\": \"+251900000000\",\n  \"jobTitle\": \"Engineer\",\n  \"department\": \"Engineering\",\n  \"employmentStartDate\": \"2026-01-15\",\n  \"officeId\": \"{{officeId}}\",\n  \"scheduleId\": \"{{scheduleId}}\",\n  \"temporaryPassword\": \"TempPass1234\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/admin/employees"
+          }
+        },
+        {
+          "name": "List Employees",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/employees?page=1&pageSize=20&status=ACTIVE",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "admin", "employees"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "pageSize", "value": "20" },
+                { "key": "search", "value": "", "disabled": true },
+                { "key": "status", "value": "ACTIVE" },
+                { "key": "officeId", "value": "{{officeId}}", "disabled": true },
+                { "key": "scheduleId", "value": "{{scheduleId}}", "disabled": true },
+                { "key": "department", "value": "", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Employee",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/admin/employees/{{employeeId}}"
+          }
+        },
+        {
+          "name": "Update Employee",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jobTitle\": \"Senior Engineer\",\n  \"department\": \"Engineering\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/admin/employees/{{employeeId}}"
+          }
+        },
+        {
+          "name": "Change Employee Status",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"employeeStatus\": \"INACTIVE\",\n  \"userStatus\": \"INACTIVE\",\n  \"reason\": \"Left the company\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/admin/employees/{{employeeId}}/status"
+          }
+        },
+        {
+          "name": "Reset Employee Password",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"User forgot password\",\n  \"temporaryPassword\": \"TempPass1234\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/admin/employees/{{employeeId}}/reset-password"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Attendance",
+      "item": [
+        {
+          "name": "Current Attendance",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/attendance/current",
+            "description": "Requires an employee session with attendance.view_own."
+          }
+        },
+        {
+          "name": "Check-in Preview",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"latitude\": 9.0105,\n  \"longitude\": 38.7612,\n  \"accuracyMeters\": 18,\n  \"capturedAt\": \"2026-08-07T09:05:00+03:00\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/attendance/check-in/preview"
+          }
+        },
+        {
+          "name": "Check-in",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"latitude\": 9.0105,\n  \"longitude\": 38.7612,\n  \"accuracyMeters\": 18,\n  \"capturedAt\": \"2026-08-07T09:05:00+03:00\",\n  \"idempotencyKey\": \"11111111-1111-4111-8111-111111111111\",\n  \"lateReasonType\": \"TRAFFIC\",\n  \"lateReasonDescription\": \"Heavy traffic near the office\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/attendance/check-in",
+            "description": "Use a fresh UUID for idempotencyKey each new attempt. lateReasonType: TRAFFIC | TRANSPORTATION | HEALTH | FAMILY_EMERGENCY | WEATHER | OTHER."
+          }
+        },
+        {
+          "name": "Check-out",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"latitude\": 9.0105,\n  \"longitude\": 38.7612,\n  \"accuracyMeters\": 18,\n  \"capturedAt\": \"2026-08-07T17:30:00+03:00\",\n  \"idempotencyKey\": \"22222222-2222-4222-8222-222222222222\",\n  \"workDescription\": \"Completed attendance integration and verified the employee leave workflow.\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/attendance/check-out",
+            "description": "workDescription min 20 chars. Use a new UUID for idempotencyKey."
+          }
+        }
+      ]
+    }
+  ]
+}
