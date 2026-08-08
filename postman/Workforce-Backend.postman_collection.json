@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
     "name": "Workforce Backend API",
-    "description": "Local collection for workforce-backend (`http://localhost:4000`).\n\nSuggested order: Health → Login → Change password (if forced) → Offices → Schedules → Employees → Attendance.",
+    "description": "Local collection for workforce-backend (`http://localhost:4000`).\n\nSuggested order: Health → Login → Change password → Offices → Schedules → Employees → Attendance → History → Leave → Notifications → Dashboard/Reports.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -11,7 +11,12 @@
     { "key": "refreshToken", "value": "" },
     { "key": "officeId", "value": "" },
     { "key": "scheduleId", "value": "" },
-    { "key": "employeeId", "value": "" }
+    { "key": "employeeId", "value": "" },
+    { "key": "timesheetId", "value": "" },
+    { "key": "worksheetId", "value": "" },
+    { "key": "leaveRequestId", "value": "" },
+    { "key": "leaveTypeId", "value": "" },
+    { "key": "notificationId", "value": "" }
   ],
   "auth": {
     "type": "bearer",
@@ -472,6 +477,363 @@
             },
             "url": "{{baseUrl}}/api/v1/attendance/check-out",
             "description": "workDescription min 20 chars. Use a new UUID for idempotencyKey."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Timesheets (employee)",
+      "item": [
+        {
+          "name": "My Timesheets",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/timesheets?page=1&pageSize=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "timesheets"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "pageSize", "value": "20" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "My Timesheet Calendar",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/timesheets/calendar?year=2026&month=8",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "timesheets", "calendar"],
+              "query": [
+                { "key": "year", "value": "2026" },
+                { "key": "month", "value": "8" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get My Timesheet",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/timesheets/{{timesheetId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Worksheets (employee)",
+      "item": [
+        {
+          "name": "My Worksheets",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/worksheets?page=1&pageSize=20"
+          }
+        },
+        {
+          "name": "My Worksheet Calendar",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/worksheets/calendar?year=2026&month=8"
+          }
+        },
+        {
+          "name": "Get My Worksheet",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/worksheets/{{worksheetId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin Timesheets / Worksheets",
+      "item": [
+        {
+          "name": "Admin List Timesheets",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/admin/timesheets?page=1&pageSize=20"
+          }
+        },
+        {
+          "name": "Admin Get Timesheet",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/admin/timesheets/{{timesheetId}}"
+          }
+        },
+        {
+          "name": "Correct Timesheet",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Clock device clock skew correction\",\n  \"actualCheckIn\": \"2026-08-07T09:00:00+03:00\",\n  \"actualCheckOut\": \"2026-08-07T17:00:00+03:00\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/admin/timesheets/{{timesheetId}}/correct"
+          }
+        },
+        {
+          "name": "Admin List Worksheets",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/admin/worksheets?page=1&pageSize=20"
+          }
+        },
+        {
+          "name": "Review Worksheet",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"adminComment\": \"Looks good, approved.\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/admin/worksheets/{{worksheetId}}/review"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Leave",
+      "item": [
+        {
+          "name": "List Leave Types",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/leave-requests/types"
+          }
+        },
+        {
+          "name": "Create Leave Request",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"leaveTypeId\": \"{{leaveTypeId}}\",\n  \"startDate\": \"2026-08-20\",\n  \"endDate\": \"2026-08-21\",\n  \"reason\": \"Family event requiring two working days off\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/leave-requests"
+          }
+        },
+        {
+          "name": "My Leave Requests",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/leave-requests?page=1&pageSize=20"
+          }
+        },
+        {
+          "name": "My Leave Summary",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/leave-requests/summary"
+          }
+        },
+        {
+          "name": "Cancel Leave Request",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Plans changed\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/leave-requests/{{leaveRequestId}}/cancel"
+          }
+        },
+        {
+          "name": "Admin List Leave Requests",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/admin/leave-requests?page=1&pageSize=20&status=PENDING"
+          }
+        },
+        {
+          "name": "Approve Leave",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": "{{baseUrl}}/api/v1/admin/leave-requests/{{leaveRequestId}}/approve"
+          }
+        },
+        {
+          "name": "Reject Leave",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Insufficient coverage for those dates\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/admin/leave-requests/{{leaveRequestId}}/reject"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Notifications",
+      "item": [
+        {
+          "name": "List Notifications",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/notifications?page=1&pageSize=20"
+          }
+        },
+        {
+          "name": "Mark Notification Read",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/notifications/{{notificationId}}/read"
+          }
+        },
+        {
+          "name": "Mark All Read",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/notifications/read-all"
+          }
+        },
+        {
+          "name": "Register Device",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deviceId\": \"postman-device-1\",\n  \"fcmToken\": \"test-fcm-token\",\n  \"platform\": \"WEB\",\n  \"appVersion\": \"1.0.0\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/notifications/devices"
+          }
+        },
+        {
+          "name": "Remove Device",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/notifications/devices/postman-device-1"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin Dashboard",
+      "item": [
+        {
+          "name": "Dashboard Today",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/admin/dashboard/today"
+          }
+        },
+        {
+          "name": "Attendance Trend",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/admin/dashboard/attendance-trend?from=2026-08-01&to=2026-08-31"
+          }
+        },
+        {
+          "name": "Leave Summary",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/admin/dashboard/leave-summary?from=2026-08-01&to=2026-08-31"
+          }
+        },
+        {
+          "name": "Recent Activity",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/admin/dashboard/recent-activity?limit=20"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin Reports",
+      "item": [
+        {
+          "name": "Timesheet Report JSON",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/admin/reports/timesheets?from=2026-08-01&to=2026-08-31&page=1&pageSize=20&format=json"
+          }
+        },
+        {
+          "name": "Timesheet Report CSV",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/admin/reports/timesheets?from=2026-08-01&to=2026-08-31&format=csv"
+          }
+        },
+        {
+          "name": "Worksheet Report",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/admin/reports/worksheets?from=2026-08-01&to=2026-08-31&format=json"
+          }
+        },
+        {
+          "name": "Leave Report",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/admin/reports/leave?from=2026-08-01&to=2026-08-31&format=json"
+          }
+        },
+        {
+          "name": "Employee Report",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/admin/reports/employees/{{employeeId}}?from=2026-08-01&to=2026-08-31"
           }
         }
       ]

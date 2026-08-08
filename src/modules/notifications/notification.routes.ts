@@ -1,0 +1,12 @@
+import { Router } from "express";
+import { authenticate, requireNormalSession, requirePermission } from "../../middleware/authenticate.js";
+import { validate } from "../../shared/validate.js";
+import { deviceIdSchema, deviceSchema, listNotificationsSchema, notificationIdSchema } from "./notification.schemas.js";
+import { listNotifications, markAllNotificationsRead, markNotificationRead, registerDevice, removeDevice } from "./notification.controller.js";
+export const notificationRouter = Router();
+notificationRouter.use(authenticate, requireNormalSession, requirePermission("notification.view"));
+notificationRouter.get("/", validate(listNotificationsSchema), listNotifications);
+notificationRouter.patch("/read-all", markAllNotificationsRead);
+notificationRouter.patch("/:notificationId/read", validate(notificationIdSchema), markNotificationRead);
+notificationRouter.post("/devices", validate(deviceSchema), registerDevice);
+notificationRouter.delete("/devices/:deviceId", validate(deviceIdSchema), removeDevice);

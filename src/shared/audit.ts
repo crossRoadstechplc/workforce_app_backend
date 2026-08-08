@@ -1,4 +1,5 @@
 import type { Request } from "express";
+import type { Prisma } from "../generated/prisma/client.js";
 
 export type AuditContext = {
   actorUserId: string;
@@ -15,7 +16,6 @@ export function auditContextFromRequest(req: Request): AuditContext {
   };
 }
 
-export function auditJson(value: unknown): object | null {
-  if (value === undefined || value === null) return null;
-  return JSON.parse(JSON.stringify(value)) as object;
+export function auditJson(value: unknown): Prisma.InputJsonValue {
+  return JSON.parse(JSON.stringify(value ?? null)) as Prisma.InputJsonValue;
 }
