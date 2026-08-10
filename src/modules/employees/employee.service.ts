@@ -2,18 +2,21 @@ import argon2 from "argon2";
 import { prisma } from "../../database/prisma.js";
 import { AppError } from "../../shared/errors/app-error.js";
 import { auditJson, type AuditContext } from "../../shared/audit.js";
+import { generateEmployeeCode } from "../../shared/employee-code.js";
 import { generateTemporaryPassword } from "../../shared/password.js";
 import { pageMeta, pagination } from "../../shared/pagination.js";
+import { assertSameOrganization } from "../../shared/tenancy.js";
+import { assertOfficeInScope, employeeOfficeFilter, type OfficeScope } from "../../shared/office-scope.js";
 
 const employeeInclude = {
   user: { select: { id: true, email: true, status: true, mustChangePassword: true, lastLoginAt: true } },
   office: true,
-  schedule: true
+  schedule: { include: { days: { orderBy: { weekday: "asc" as const } } } }
 } as const;
 
 type CreateEmployeeInput = {
   email: string;
-  employeeCode: string;
+  employeeCode?: string;
   firstName: string;
   middleName?: string | null;
   lastName: string;
@@ -36,18 +39,23 @@ type ListInput = {
   department?: string;
 };
 
-async function validateAssignments(officeId?: string | null, scheduleId?: string | null) {
+async function validateAssignments(organizationId: string, officeId?: string | null, scheduleId?: string | null) {
   const [office, schedule] = await Promise.all([
     officeId ? prisma.office.findUnique({ where: { id: officeId } }) : null,
     scheduleId ? prisma.workSchedule.findUnique({ where: { id: scheduleId } }) : null
   ]);
-  if (officeId && (!office || !office.isActive)) throw new AppError(400, "INVALID_OFFICE", "Office does not exist or is inactive");
-  if (scheduleId && (!schedule || !schedule.isActive)) throw new AppError(400, "INVALID_SCHEDULE", "Schedule does not exist or is inactive");
+  if (officeId && (!office || !office.isActive || office.organizationId !== organizationId)) {
+    throw new AppError(400, "INVALID_OFFICE", "Office does not exist or is inactive");
+  }
+  if (scheduleId && (!schedule || !schedule.isActive || schedule.organizationId !== organizationId)) {
+    throw new AppError(400, "INVALID_SCHEDULE", "Schedule does not exist or is inactive");
+  }
 }
 
 export const employeeService = {
-  async create(input: CreateEmployeeInput, audit: AuditContext) {
-    await validateAssignments(input.officeId, input.scheduleId);
+  async create(organizationId: string, input: CreateEmployeeInput, audit: AuditContext, scope: OfficeScope) {
+    assertOfficeInScope(scope, input.officeId ?? undefined, "You can only assign employees to offices you manage");
+    await validateAssignments(organizationId, input.officeId, input.scheduleId);
     const temporaryPassword = input.temporaryPassword ?? generateTemporaryPassword();
     const passwordHash = await argon2.hash(temporaryPassword, { type: argon2.argon2id });
 
@@ -55,15 +63,19 @@ export const employeeService = {
       const employeeRole = await tx.role.findUnique({ where: { name: "EMPLOYEE" } });
       if (!employeeRole) throw new AppError(500, "ROLE_NOT_CONFIGURED", "EMPLOYEE role is not configured");
 
+      const employeeCode = input.employeeCode ?? (await generateEmployeeCode(tx, organizationId));
+
       const user = await tx.user.create({
         data: {
           email: input.email,
           passwordHash,
           mustChangePassword: true,
           userRoles: { create: { roleId: employeeRole.id } },
+          memberships: { create: { organizationId } },
           employee: {
             create: {
-              employeeCode: input.employeeCode,
+              organizationId,
+              employeeCode,
               firstName: input.firstName,
               middleName: input.middleName,
               lastName: input.lastName,
@@ -88,6 +100,7 @@ export const employeeService = {
           newValues: {
             email: user.email,
             employeeCode: user.employee!.employeeCode,
+            organizationId,
             officeId: user.employee!.officeId,
             scheduleId: user.employee!.scheduleId,
             status: user.employee!.status
@@ -102,21 +115,24 @@ export const employeeService = {
     return { employee, temporaryPassword };
   },
 
-  async list(input: ListInput) {
+  async list(organizationId: string, input: ListInput, scope: OfficeScope) {
     const where = {
+      organizationId,
+      ...employeeOfficeFilter(scope, input.officeId),
       ...(input.status ? { status: input.status } : {}),
-      ...(input.officeId ? { officeId: input.officeId } : {}),
       ...(input.scheduleId ? { scheduleId: input.scheduleId } : {}),
       ...(input.department ? { department: { equals: input.department, mode: "insensitive" as const } } : {}),
-      ...(input.search ? {
-        OR: [
-          { employeeCode: { contains: input.search, mode: "insensitive" as const } },
-          { firstName: { contains: input.search, mode: "insensitive" as const } },
-          { middleName: { contains: input.search, mode: "insensitive" as const } },
-          { lastName: { contains: input.search, mode: "insensitive" as const } },
-          { user: { email: { contains: input.search, mode: "insensitive" as const } } }
-        ]
-      } : {})
+      ...(input.search
+        ? {
+            OR: [
+              { employeeCode: { contains: input.search, mode: "insensitive" as const } },
+              { firstName: { contains: input.search, mode: "insensitive" as const } },
+              { middleName: { contains: input.search, mode: "insensitive" as const } },
+              { lastName: { contains: input.search, mode: "insensitive" as const } },
+              { user: { email: { contains: input.search, mode: "insensitive" as const } } }
+            ]
+          }
+        : {})
     };
     const [items, total] = await prisma.$transaction([
       prisma.employee.findMany({ where, include: employeeInclude, orderBy: [{ createdAt: "desc" }], ...pagination(input) }),
@@ -125,27 +141,36 @@ export const employeeService = {
     return { items, meta: pageMeta(input.page, input.pageSize, total) };
   },
 
-  async get(employeeId: string) {
+  async get(organizationId: string, employeeId: string, scope: OfficeScope) {
     const employee = await prisma.employee.findUnique({ where: { id: employeeId }, include: employeeInclude });
     if (!employee) throw new AppError(404, "EMPLOYEE_NOT_FOUND", "Employee not found");
+    assertSameOrganization(employee.organizationId, organizationId, "EMPLOYEE_NOT_FOUND", "Employee not found");
+    assertOfficeInScope(scope, employee.officeId, "You do not manage this employee's office");
     return employee;
   },
 
-  async update(employeeId: string, input: {
-    email?: string;
-    employeeCode?: string;
-    firstName?: string;
-    middleName?: string | null;
-    lastName?: string;
-    phone?: string | null;
-    jobTitle?: string | null;
-    department?: string | null;
-    employmentStartDate?: Date;
-    officeId?: string | null;
-    scheduleId?: string | null;
-  }, audit: AuditContext) {
-    const current = await this.get(employeeId);
-    await validateAssignments(input.officeId, input.scheduleId);
+  async update(
+    organizationId: string,
+    employeeId: string,
+    input: {
+      email?: string;
+      employeeCode?: string;
+      firstName?: string;
+      middleName?: string | null;
+      lastName?: string;
+      phone?: string | null;
+      jobTitle?: string | null;
+      department?: string | null;
+      employmentStartDate?: Date;
+      officeId?: string | null;
+      scheduleId?: string | null;
+    },
+    audit: AuditContext,
+    scope: OfficeScope
+  ) {
+    const current = await this.get(organizationId, employeeId, scope);
+    if (input.officeId !== undefined) assertOfficeInScope(scope, input.officeId, "You can only assign employees to offices you manage");
+    await validateAssignments(organizationId, input.officeId, input.scheduleId);
 
     return prisma.$transaction(async (tx) => {
       if (input.email && input.email !== current.user.email) {
@@ -169,8 +194,14 @@ export const employeeService = {
     });
   },
 
-  async changeStatus(employeeId: string, input: { employeeStatus: "ACTIVE" | "INACTIVE" | "TERMINATED"; userStatus?: "ACTIVE" | "INACTIVE"; reason: string }, audit: AuditContext) {
-    const current = await this.get(employeeId);
+  async changeStatus(
+    organizationId: string,
+    employeeId: string,
+    input: { employeeStatus: "ACTIVE" | "INACTIVE" | "TERMINATED"; userStatus?: "ACTIVE" | "INACTIVE"; reason: string },
+    audit: AuditContext,
+    scope: OfficeScope
+  ) {
+    const current = await this.get(organizationId, employeeId, scope);
     const desiredUserStatus = input.userStatus ?? (input.employeeStatus === "ACTIVE" ? "ACTIVE" : "INACTIVE");
     return prisma.$transaction(async (tx) => {
       const employee = await tx.employee.update({ where: { id: employeeId }, data: { status: input.employeeStatus }, include: employeeInclude });
@@ -195,8 +226,8 @@ export const employeeService = {
     });
   },
 
-  async resetPassword(employeeId: string, input: { temporaryPassword?: string; reason: string }, audit: AuditContext) {
-    const employee = await this.get(employeeId);
+  async resetPassword(organizationId: string, employeeId: string, input: { temporaryPassword?: string; reason: string }, audit: AuditContext, scope: OfficeScope) {
+    const employee = await this.get(organizationId, employeeId, scope);
     const temporaryPassword = input.temporaryPassword ?? generateTemporaryPassword();
     const passwordHash = await argon2.hash(temporaryPassword, { type: argon2.argon2id });
     await prisma.$transaction(async (tx) => {

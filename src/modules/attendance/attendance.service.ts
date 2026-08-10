@@ -2,7 +2,8 @@ import { DateTime } from "luxon";
 import { prisma } from "../../database/prisma.js";
 import { AppError } from "../../shared/errors/app-error.js";
 import { deliverNotification } from "../notifications/notification.service.js";
-import { emitToRole, emitToUser } from "../../realtime/socket.server.js";
+import { emitToOrgRole, emitToUser } from "../../realtime/socket.server.js";
+import { ROLE } from "../../shared/tenancy.js";
 
 type LocationInput = { latitude: number; longitude: number; accuracyMeters: number; capturedAt: Date };
 type CheckInInput = LocationInput & { idempotencyKey: string; lateReasonType?: string; lateReasonDescription?: string };
@@ -18,12 +19,23 @@ function scheduledInstant(workDate: string, hhmm: string, timezone: string) {
 
 async function employeeContext(userId: string) {
   const employee = await prisma.employee.findUnique({
-    where: { userId }, include: { user: true, office: true, schedule: true }
+    where: { userId },
+    include: { user: true, office: true, schedule: { include: { days: true } } }
   });
   if (!employee || employee.status !== "ACTIVE" || employee.user.status !== "ACTIVE") throw new AppError(403, "EMPLOYEE_INACTIVE", "Active employee account required");
   if (!employee.office || !employee.office.isActive) throw new AppError(400, "OFFICE_NOT_ASSIGNED", "An active office assignment is required");
   if (!employee.schedule || !employee.schedule.isActive) throw new AppError(400, "SCHEDULE_NOT_ASSIGNED", "An active work schedule is required");
   return employee;
+}
+
+function dayRuleForWeekday(schedule: NonNullable<Awaited<ReturnType<typeof employeeContext>>["schedule"]>, weekday: number) {
+  const day = schedule.days.find((d) => d.weekday === weekday);
+  if (day) return { checkInTime: day.checkInTime, checkOutTime: day.checkOutTime };
+  // Legacy fallback if days were not backfilled yet
+  if (schedule.workingDays.includes(weekday)) {
+    return { checkInTime: schedule.checkInTime, checkOutTime: schedule.checkOutTime };
+  }
+  return null;
 }
 
 function validateCapturedAt(capturedAt: Date, serverTime: Date) {
@@ -32,6 +44,15 @@ function validateCapturedAt(capturedAt: Date, serverTime: Date) {
 }
 
 async function geofence(input: LocationInput, office: { latitude: unknown; longitude: unknown; allowedRadiusMeters: number; maximumAccuracyMeters: number }) {
+  // Local/dev demos (Chrome, emulators) are rarely at the seeded office coords.
+  // Keep real geofencing in production; set ATTENDANCE_DEV_BYPASS_GEOFENCE=false to test it locally.
+  const bypass =
+    process.env.NODE_ENV !== "production" &&
+    process.env.ATTENDANCE_DEV_BYPASS_GEOFENCE !== "false";
+  if (bypass) {
+    return { distanceMeters: 0, insideRadius: true };
+  }
+
   if (input.accuracyMeters > office.maximumAccuracyMeters) throw new AppError(422, "LOCATION_ACCURACY_TOO_LOW", `Location accuracy must be within ${office.maximumAccuracyMeters} meters`);
   const rows = await prisma.$queryRaw<GeoResult[]>`
     SELECT
@@ -55,19 +76,43 @@ function attendanceClock(employee: Awaited<ReturnType<typeof employeeContext>>, 
   const localNow = DateTime.fromJSDate(now, { zone });
   const workDate = localNow.toISODate()!;
   const weekday = localNow.weekday;
-  if (!employee.schedule!.workingDays.includes(weekday)) throw new AppError(409, "NOT_A_WORKING_DAY", "Today is not configured as a working day");
-  let scheduledIn = scheduledInstant(workDate, employee.schedule!.checkInTime, zone);
-  let scheduledOut = scheduledInstant(workDate, employee.schedule!.checkOutTime, zone);
+  const dayRule = dayRuleForWeekday(employee.schedule!, weekday);
+  if (!dayRule) throw new AppError(409, "NOT_A_WORKING_DAY", "Today is not configured as a working day");
+  let scheduledIn = scheduledInstant(workDate, dayRule.checkInTime, zone);
+  let scheduledOut = scheduledInstant(workDate, dayRule.checkOutTime, zone);
   if (scheduledOut <= scheduledIn) scheduledOut = scheduledOut.plus({ days: 1 });
   const lateThreshold = scheduledIn.plus({ minutes: employee.schedule!.lateGraceMinutes });
   const lateMinutes = Math.max(0, Math.floor(localNow.diff(lateThreshold, "minutes").minutes));
-  return { zone, workDate, scheduledIn, scheduledOut, lateMinutes, isLate: lateMinutes > 0 };
+  return {
+    zone,
+    workDate,
+    scheduledIn,
+    scheduledOut,
+    lateMinutes,
+    isLate: lateMinutes > 0,
+    checkInTime: dayRule.checkInTime,
+    checkOutTime: dayRule.checkOutTime
+  };
 }
 
 export const attendanceService = {
   async current(userId: string) {
     const employee = await employeeContext(userId);
-    return prisma.timesheet.findFirst({ where: { employeeId: employee.id, isOpen: true }, include: { lateReason: true, locations: true } });
+    const open = await prisma.timesheet.findFirst({
+      where: { employeeId: employee.id, isOpen: true },
+      include: { lateReason: true, locations: true }
+    });
+    if (open) return open;
+
+    // After checkout, still return today's timesheet so the app shows
+    // "completed" instead of offering another check-in.
+    const zone = employee.office!.timezone || employee.schedule!.timezone;
+    const workDate = DateTime.now().setZone(zone).startOf("day").toJSDate();
+    return prisma.timesheet.findFirst({
+      where: { employeeId: employee.id, workDate },
+      include: { lateReason: true, locations: true },
+      orderBy: { actualCheckIn: "desc" }
+    });
   },
 
   async preview(userId: string, input: LocationInput) {
@@ -106,7 +151,7 @@ export const attendanceService = {
           scheduledCheckIn: clock.scheduledIn.toUTC().toJSDate(), scheduledCheckOut: clock.scheduledOut.toUTC().toJSDate(), actualCheckIn: now,
           lateMinutes: clock.lateMinutes, isLate: clock.isLate, status: clock.isLate ? "PRESENT_LATE" : "PRESENT_ON_TIME",
           checkInIdempotencyKey: input.idempotencyKey,
-          scheduleCheckInTime: employee.schedule!.checkInTime, scheduleCheckOutTime: employee.schedule!.checkOutTime,
+          scheduleCheckInTime: clock.checkInTime, scheduleCheckOutTime: clock.checkOutTime,
           scheduleLateGraceMinutes: employee.schedule!.lateGraceMinutes,
           officeLatitude: employee.office!.latitude, officeLongitude: employee.office!.longitude,
           officeAllowedRadiusMeters: employee.office!.allowedRadiusMeters, officeMaximumAccuracyMeters: employee.office!.maximumAccuracyMeters,
@@ -120,7 +165,7 @@ export const attendanceService = {
     });
     await deliverNotification(result.notification);
     emitToUser(userId, "attendance.checked_in", { timesheetId: result.timesheet.id, status: result.timesheet.status });
-    emitToRole("ADMIN", clock.isLate ? "employee.checked_in_late" : "employee.checked_in", { employeeId: employee.id, timesheetId: result.timesheet.id, lateMinutes: clock.lateMinutes });
+    emitToOrgRole(employee.organizationId, ROLE.ORG_ADMIN, clock.isLate ? "employee.checked_in_late" : "employee.checked_in", { employeeId: employee.id, timesheetId: result.timesheet.id, lateMinutes: clock.lateMinutes });
     return result.timesheet;
   },
 
@@ -159,7 +204,7 @@ export const attendanceService = {
     });
     await deliverNotification(result.notification);
     emitToUser(userId, "attendance.checked_out", { timesheetId: result.timesheet.id, workedMinutes });
-    emitToRole("ADMIN", "employee.checked_out", { employeeId: employee.id, timesheetId: result.timesheet.id, workedMinutes });
+    emitToOrgRole(employee.organizationId, ROLE.ORG_ADMIN, "employee.checked_out", { employeeId: employee.id, timesheetId: result.timesheet.id, workedMinutes });
     return result.timesheet;
   }
 };

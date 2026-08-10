@@ -257,7 +257,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Standard Day\",\n  \"checkInTime\": \"09:00\",\n  \"checkOutTime\": \"17:00\",\n  \"lateGraceMinutes\": 15,\n  \"workingDays\": [1, 2, 3, 4, 5],\n  \"timezone\": \"Africa/Addis_Ababa\"\n}"
+              "raw": "{\n  \"name\": \"Standard Day\",\n  \"lateGraceMinutes\": 15,\n  \"timezone\": \"Africa/Addis_Ababa\",\n  \"days\": [\n    { \"weekday\": 1, \"checkInTime\": \"09:00\", \"checkOutTime\": \"17:00\" },\n    { \"weekday\": 2, \"checkInTime\": \"09:00\", \"checkOutTime\": \"17:00\" },\n    { \"weekday\": 3, \"checkInTime\": \"09:00\", \"checkOutTime\": \"17:00\" },\n    { \"weekday\": 4, \"checkInTime\": \"09:00\", \"checkOutTime\": \"17:00\" },\n    { \"weekday\": 5, \"checkInTime\": \"09:00\", \"checkOutTime\": \"17:00\" },\n    { \"weekday\": 6, \"checkInTime\": \"09:00\", \"checkOutTime\": \"13:00\" }\n  ]\n}"
             },
             "url": "{{baseUrl}}/api/v1/admin/schedules"
           }
@@ -297,7 +297,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"lateGraceMinutes\": 20,\n  \"checkOutTime\": \"17:30\"\n}"
+              "raw": "{\n  \"lateGraceMinutes\": 20,\n  \"days\": [\n    { \"weekday\": 1, \"checkInTime\": \"09:00\", \"checkOutTime\": \"17:30\" },\n    { \"weekday\": 2, \"checkInTime\": \"09:00\", \"checkOutTime\": \"17:30\" },\n    { \"weekday\": 3, \"checkInTime\": \"09:00\", \"checkOutTime\": \"17:30\" },\n    { \"weekday\": 4, \"checkInTime\": \"09:00\", \"checkOutTime\": \"17:30\" },\n    { \"weekday\": 5, \"checkInTime\": \"09:00\", \"checkOutTime\": \"17:30\" },\n    { \"weekday\": 6, \"checkInTime\": \"09:00\", \"checkOutTime\": \"13:00\" }\n  ]\n}"
             },
             "url": "{{baseUrl}}/api/v1/admin/schedules/{{scheduleId}}"
           }

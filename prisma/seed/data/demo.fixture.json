@@ -1,0 +1,325 @@
+{
+  "organizations": [
+    {
+      "slug": "acme-corp",
+      "name": "Acme Corporation",
+      "orgAdmin": {
+        "email": "admin@acme.demo",
+        "firstName": "Alice",
+        "lastName": "Admin"
+      },
+      "leaveTypes": ["Annual Leave", "Sick Leave", "Emergency Leave", "Unpaid Leave", "Other Leave"],
+      "offices": [
+        {
+          "key": "hq",
+          "name": "Acme HQ",
+          "address": "Bole Road, Addis Ababa",
+          "lat": 8.9806,
+          "lng": 38.7578,
+          "radiusMeters": 150
+        },
+        {
+          "key": "branch",
+          "name": "Acme Branch",
+          "address": "Kazanchis, Addis Ababa",
+          "lat": 9.0101,
+          "lng": 38.7612,
+          "radiusMeters": 120
+        }
+      ],
+      "schedules": [
+        {
+          "key": "standard",
+          "name": "Standard 9-5",
+          "checkIn": "09:00",
+          "checkOut": "17:00",
+          "lateGraceMinutes": 10,
+          "workingDays": [1, 2, 3, 4, 5]
+        },
+        {
+          "key": "early",
+          "name": "Early Shift",
+          "checkIn": "07:00",
+          "checkOut": "15:00",
+          "lateGraceMinutes": 5,
+          "workingDays": [1, 2, 3, 4, 5, 6],
+          "days": [
+            { "weekday": 1, "checkIn": "07:00", "checkOut": "15:00" },
+            { "weekday": 2, "checkIn": "07:00", "checkOut": "15:00" },
+            { "weekday": 3, "checkIn": "07:00", "checkOut": "15:00" },
+            { "weekday": 4, "checkIn": "07:00", "checkOut": "15:00" },
+            { "weekday": 5, "checkIn": "07:00", "checkOut": "15:00" },
+            { "weekday": 6, "checkIn": "08:00", "checkOut": "12:00" }
+          ]
+        }
+      ],
+      "employees": [
+        {
+          "code": "ACM001",
+          "email": "sara@acme.demo",
+          "firstName": "Sara",
+          "lastName": "Bekele",
+          "officeKey": "hq",
+          "scheduleKey": "standard",
+          "department": "Engineering",
+          "jobTitle": "Software Engineer",
+          "notes": "Open timesheet today; use for check-out demo"
+        },
+        {
+          "code": "ACM002",
+          "email": "daniel@acme.demo",
+          "firstName": "Daniel",
+          "lastName": "Tesfaye",
+          "officeKey": "hq",
+          "scheduleKey": "standard",
+          "department": "Engineering",
+          "jobTitle": "Senior Engineer",
+          "notes": "Late attendance history"
+        },
+        {
+          "code": "ACM003",
+          "email": "helen@acme.demo",
+          "firstName": "Helen",
+          "lastName": "Alemu",
+          "officeKey": "branch",
+          "scheduleKey": "standard",
+          "department": "Operations",
+          "jobTitle": "Ops Lead",
+          "notes": "Pending leave — approve in org admin portal"
+        },
+        {
+          "code": "ACM004",
+          "email": "mike@acme.demo",
+          "firstName": "Mike",
+          "lastName": "Hailu",
+          "officeKey": "branch",
+          "scheduleKey": "early",
+          "department": "Support",
+          "jobTitle": "Support Agent"
+        },
+        {
+          "code": "ACM005",
+          "email": "lina@acme.demo",
+          "firstName": "Lina",
+          "lastName": "Girma",
+          "officeKey": "hq",
+          "scheduleKey": "standard",
+          "department": "HR",
+          "jobTitle": "HR Officer"
+        },
+        {
+          "code": "ACM006",
+          "email": "yonas@acme.demo",
+          "firstName": "Yonas",
+          "lastName": "Kebede",
+          "officeKey": "hq",
+          "scheduleKey": "standard",
+          "department": "Finance",
+          "jobTitle": "Accountant"
+        },
+        {
+          "code": "ACM007",
+          "email": "ruth@acme.demo",
+          "firstName": "Ruth",
+          "lastName": "Mekonnen",
+          "officeKey": "branch",
+          "scheduleKey": "standard",
+          "department": "Operations",
+          "jobTitle": "Coordinator",
+          "notes": "Rejected leave example"
+        },
+        {
+          "code": "ACM008",
+          "email": "sam@acme.demo",
+          "firstName": "Sam",
+          "lastName": "Desta",
+          "officeKey": "branch",
+          "scheduleKey": "early",
+          "department": "Support",
+          "jobTitle": "Support Agent",
+          "notes": "Missing checkout scenario"
+        }
+      ],
+      "attendanceScenarios": [
+        { "employeeCode": "ACM001", "daysAgo": 0, "status": "open" },
+        { "employeeCode": "ACM001", "daysAgo": 1, "status": "completed_on_time", "worksheet": true, "worksheetReviewed": true },
+        { "employeeCode": "ACM002", "daysAgo": 2, "status": "completed_late", "lateReason": "Traffic congestion", "worksheet": true },
+        { "employeeCode": "ACM003", "daysAgo": 1, "status": "completed_on_time", "worksheet": true },
+        { "employeeCode": "ACM008", "daysAgo": 1, "status": "missing_checkout" },
+        { "employeeCode": "ACM004", "daysAgo": 0, "status": "open", "lateMinutes": 5 }
+      ],
+      "leaveScenarios": [
+        {
+          "employeeCode": "ACM003",
+          "leaveType": "Annual Leave",
+          "status": "PENDING",
+          "startDaysFromNow": 5,
+          "days": 3,
+          "reason": "Family event out of town"
+        },
+        {
+          "employeeCode": "ACM001",
+          "leaveType": "Sick Leave",
+          "status": "APPROVED",
+          "startDaysAgo": 10,
+          "days": 2,
+          "reason": "Medical rest"
+        },
+        {
+          "employeeCode": "ACM007",
+          "leaveType": "Emergency Leave",
+          "status": "REJECTED",
+          "startDaysFromNow": 8,
+          "days": 2,
+          "reason": "Personal travel",
+          "decisionReason": "Peak operations period"
+        },
+        {
+          "employeeCode": "ACM005",
+          "leaveType": "Unpaid Leave",
+          "status": "CANCELLED",
+          "startDaysFromNow": 12,
+          "days": 1,
+          "reason": "Cancelled personal errand"
+        }
+      ]
+    },
+    {
+      "slug": "globex",
+      "name": "Globex Industries",
+      "orgAdmin": {
+        "email": "admin@globex.demo",
+        "firstName": "Bob",
+        "lastName": "Manager"
+      },
+      "leaveTypes": ["Annual Leave", "Sick Leave", "Emergency Leave", "Unpaid Leave"],
+      "offices": [
+        {
+          "key": "main",
+          "name": "Globex Main Office",
+          "address": "Mexico Square, Addis Ababa",
+          "lat": 9.0123,
+          "lng": 38.7456,
+          "radiusMeters": 140
+        },
+        {
+          "key": "warehouse",
+          "name": "Globex Warehouse",
+          "address": "Akaki Kality",
+          "lat": 8.8721,
+          "lng": 38.8012,
+          "radiusMeters": 200
+        }
+      ],
+      "schedules": [
+        {
+          "key": "day",
+          "name": "Day Shift",
+          "checkIn": "08:30",
+          "checkOut": "17:30",
+          "lateGraceMinutes": 15,
+          "workingDays": [1, 2, 3, 4, 5]
+        }
+      ],
+      "employees": [
+        {
+          "code": "GLB001",
+          "email": "emma@globex.demo",
+          "firstName": "Emma",
+          "lastName": "Solomon",
+          "officeKey": "main",
+          "scheduleKey": "day",
+          "department": "Logistics",
+          "jobTitle": "Logistics Manager",
+          "notes": "Second tenant — verify isolation from Acme"
+        },
+        {
+          "code": "GLB002",
+          "email": "tom@globex.demo",
+          "firstName": "Tom",
+          "lastName": "Abera",
+          "officeKey": "main",
+          "scheduleKey": "day",
+          "department": "Logistics",
+          "jobTitle": "Dispatcher"
+        },
+        {
+          "code": "GLB003",
+          "email": "nina@globex.demo",
+          "firstName": "Nina",
+          "lastName": "Worku",
+          "officeKey": "warehouse",
+          "scheduleKey": "day",
+          "department": "Warehouse",
+          "jobTitle": "Supervisor",
+          "notes": "Pending leave at Globex"
+        },
+        {
+          "code": "GLB004",
+          "email": "paul@globex.demo",
+          "firstName": "Paul",
+          "lastName": "Getachew",
+          "officeKey": "warehouse",
+          "scheduleKey": "day",
+          "department": "Warehouse",
+          "jobTitle": "Handler"
+        },
+        {
+          "code": "GLB005",
+          "email": "ivy@globex.demo",
+          "firstName": "Ivy",
+          "lastName": "Negash",
+          "officeKey": "main",
+          "scheduleKey": "day",
+          "department": "Admin",
+          "jobTitle": "Office Admin"
+        },
+        {
+          "code": "GLB006",
+          "email": "leo@globex.demo",
+          "firstName": "Leo",
+          "lastName": "Fikadu",
+          "officeKey": "warehouse",
+          "scheduleKey": "day",
+          "department": "Warehouse",
+          "jobTitle": "Handler",
+          "notes": "Missing checkout at Globex"
+        }
+      ],
+      "attendanceScenarios": [
+        { "employeeCode": "GLB001", "daysAgo": 0, "status": "open" },
+        { "employeeCode": "GLB001", "daysAgo": 1, "status": "completed_on_time", "worksheet": true, "worksheetReviewed": false },
+        { "employeeCode": "GLB002", "daysAgo": 2, "status": "completed_late", "lateReason": "Vehicle delay", "worksheet": true },
+        { "employeeCode": "GLB006", "daysAgo": 1, "status": "missing_checkout" },
+        { "employeeCode": "GLB004", "daysAgo": 1, "status": "completed_on_time", "worksheet": true }
+      ],
+      "leaveScenarios": [
+        {
+          "employeeCode": "GLB003",
+          "leaveType": "Annual Leave",
+          "status": "PENDING",
+          "startDaysFromNow": 7,
+          "days": 4,
+          "reason": "Holiday travel"
+        },
+        {
+          "employeeCode": "GLB001",
+          "leaveType": "Sick Leave",
+          "status": "APPROVED",
+          "startDaysAgo": 14,
+          "days": 1,
+          "reason": "Flu recovery"
+        },
+        {
+          "employeeCode": "GLB005",
+          "leaveType": "Emergency Leave",
+          "status": "REJECTED",
+          "startDaysFromNow": 3,
+          "days": 2,
+          "reason": "Family visit",
+          "decisionReason": "Minimum staffing required"
+        }
+      ]
+    }
+  ]
+}

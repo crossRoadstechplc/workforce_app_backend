@@ -76,23 +76,62 @@ enum DevicePlatform {
   WEB
 }
 
+model Organization {
+  id          String                     @id @default(uuid()) @db.Uuid
+  name        String
+  slug        String                     @unique
+  isActive    Boolean                    @default(true) @map("is_active")
+  createdAt   DateTime                   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime                   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  memberships OrganizationMembership[]
+  offices     Office[]
+  schedules   WorkSchedule[]
+  leaveTypes  LeaveType[]
+  employees   Employee[]
+  @@map("organizations")
+}
+
+model OrganizationMembership {
+  userId         String       @map("user_id") @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  @@id([userId, organizationId])
+  @@index([organizationId])
+  @@map("organization_memberships")
+}
+
+model AdminOffice {
+  userId    String   @map("user_id") @db.Uuid
+  officeId  String   @map("office_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  office    Office   @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  @@id([userId, officeId])
+  @@index([officeId])
+  @@map("admin_offices")
+}
+
 model User {
-  id                 String          @id @default(uuid()) @db.Uuid
-  email              String          @unique
-  passwordHash       String          @map("password_hash")
-  mustChangePassword Boolean         @default(true) @map("must_change_password")
-  status             UserStatus      @default(ACTIVE)
-  lastLoginAt        DateTime?       @map("last_login_at") @db.Timestamptz(6)
-  createdAt          DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt          DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id                 String                     @id @default(uuid()) @db.Uuid
+  email              String                     @unique
+  passwordHash       String                     @map("password_hash")
+  mustChangePassword Boolean                    @default(true) @map("must_change_password")
+  status             UserStatus                 @default(ACTIVE)
+  lastLoginAt        DateTime?                  @map("last_login_at") @db.Timestamptz(6)
+  createdAt          DateTime                   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime                   @updatedAt @map("updated_at") @db.Timestamptz(6)
   employee           Employee?
   userRoles          UserRole[]
   refreshTokens      RefreshToken[]
-  auditLogs          AuditLog[]      @relation("AuditActor")
-  leaveDecisions     LeaveDecision[] @relation("LeaveDecisionAdmin")
+  auditLogs          AuditLog[]                 @relation("AuditActor")
+  leaveDecisions     LeaveDecision[]            @relation("LeaveDecisionAdmin")
   notifications      Notification[]
   devices            UserDevice[]
-  reviewedWorksheets Worksheet[]     @relation("WorksheetReviewer")
+  reviewedWorksheets Worksheet[]                @relation("WorksheetReviewer")
+  memberships        OrganizationMembership[]
+  adminOffices       AdminOffice[]
   @@map("users")
 }
 
@@ -136,42 +175,71 @@ model RolePermission {
 }
 
 model Office {
-  id                    String      @id @default(uuid()) @db.Uuid
-  name                  String      @unique
+  id                    String        @id @default(uuid()) @db.Uuid
+  organizationId        String        @map("organization_id") @db.Uuid
+  name                  String
   address               String?
-  latitude              Decimal     @db.Decimal(10, 7)
-  longitude             Decimal     @db.Decimal(10, 7)
-  allowedRadiusMeters   Int         @map("allowed_radius_meters")
-  maximumAccuracyMeters Int         @default(100) @map("maximum_accuracy_meters")
-  timezone              String      @default("Africa/Addis_Ababa")
-  isActive              Boolean     @default(true) @map("is_active")
-  createdAt             DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt             DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+  latitude              Decimal       @db.Decimal(10, 7)
+  longitude             Decimal       @db.Decimal(10, 7)
+  allowedRadiusMeters   Int           @map("allowed_radius_meters")
+  maximumAccuracyMeters Int           @default(100) @map("maximum_accuracy_meters")
+  timezone              String        @default("Africa/Addis_Ababa")
+  isActive              Boolean       @default(true) @map("is_active")
+  createdAt             DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization          Organization  @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   employees             Employee[]
   timesheets            Timesheet[]
+  adminOffices          AdminOffice[]
+  @@unique([organizationId, name])
+  @@index([organizationId, isActive])
   @@map("offices")
 }
 
 model WorkSchedule {
-  id               String      @id @default(uuid()) @db.Uuid
-  name             String      @unique
-  checkInTime      String      @map("check_in_time")
-  checkOutTime     String      @map("check_out_time")
-  lateGraceMinutes Int         @default(0) @map("late_grace_minutes")
-  workingDays      Int[]       @map("working_days")
-  timezone         String      @default("Africa/Addis_Ababa")
-  isActive         Boolean     @default(true) @map("is_active")
-  createdAt        DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt        DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id               String            @id @default(uuid()) @db.Uuid
+  organizationId   String            @map("organization_id") @db.Uuid
+  name             String
+  /// Default / summary check-in (derived from first working day when days are set)
+  checkInTime      String            @map("check_in_time")
+  /// Default / summary check-out (derived from first working day when days are set)
+  checkOutTime     String            @map("check_out_time")
+  lateGraceMinutes Int               @default(0) @map("late_grace_minutes")
+  /// Denormalized list of working weekdays (1=Mon … 7=Sun), derived from days
+  workingDays      Int[]             @map("working_days")
+  timezone         String            @default("Africa/Addis_Ababa")
+  isActive         Boolean           @default(true) @map("is_active")
+  createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization     Organization      @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  days             WorkScheduleDay[]
   employees        Employee[]
   timesheets       Timesheet[]
+  @@unique([organizationId, name])
+  @@index([organizationId, isActive])
   @@map("work_schedules")
+}
+
+/// Per-weekday check-in / check-out for a work schedule (only working days are stored).
+model WorkScheduleDay {
+  id           String       @id @default(uuid()) @db.Uuid
+  scheduleId   String       @map("schedule_id") @db.Uuid
+  weekday      Int          // Luxon weekday: 1=Monday … 7=Sunday
+  checkInTime  String       @map("check_in_time")
+  checkOutTime String       @map("check_out_time")
+  createdAt    DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  schedule     WorkSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  @@unique([scheduleId, weekday])
+  @@index([scheduleId])
+  @@map("work_schedule_days")
 }
 
 model Employee {
   id                  String         @id @default(uuid()) @db.Uuid
+  organizationId      String         @map("organization_id") @db.Uuid
   userId              String         @unique @map("user_id") @db.Uuid
-  employeeCode        String         @unique @map("employee_code")
+  employeeCode        String         @map("employee_code")
   officeId            String?        @map("office_id") @db.Uuid
   scheduleId          String?        @map("schedule_id") @db.Uuid
   firstName           String         @map("first_name")
@@ -184,6 +252,7 @@ model Employee {
   status              EmployeeStatus @default(ACTIVE)
   createdAt           DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt           DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization        Organization   @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   user                User           @relation(fields: [userId], references: [id], onDelete: Restrict)
   office              Office?        @relation(fields: [officeId], references: [id], onDelete: SetNull)
   schedule            WorkSchedule?  @relation(fields: [scheduleId], references: [id], onDelete: SetNull)
@@ -191,6 +260,8 @@ model Employee {
   worksheets          Worksheet[]
   lateReasons         LateReason[]
   leaveRequests       LeaveRequest[]
+  @@unique([organizationId, employeeCode])
+  @@index([organizationId, status])
   @@index([officeId])
   @@index([scheduleId])
   @@index([status, officeId])
@@ -342,13 +413,17 @@ model AttendanceCorrection {
 }
 
 model LeaveType {
-  id          String         @id @default(uuid()) @db.Uuid
-  name        String         @unique
-  description String?
-  isActive    Boolean        @default(true) @map("is_active")
-  createdAt   DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
-  requests    LeaveRequest[]
+  id             String         @id @default(uuid()) @db.Uuid
+  organizationId String         @map("organization_id") @db.Uuid
+  name           String
+  description    String?
+  isActive       Boolean        @default(true) @map("is_active")
+  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  requests       LeaveRequest[]
+  @@unique([organizationId, name])
+  @@index([organizationId, isActive])
   @@map("leave_types")
 }
 

@@ -1,7 +1,21 @@
 import { Router } from "express";
-import { authenticate, requireNormalSession, requirePermission } from "../../middleware/authenticate.js";
+import { authenticate, requireNormalSession, requireOrgContext, requirePermission } from "../../middleware/authenticate.js";
 import { validate } from "../../shared/validate.js";
 import { adminLeave, adminLeaves, approveLeave, cancelLeave, createLeave, leaveTypes, myLeave, myLeaves, myLeaveSummary, rejectLeave } from "./leave.controller.js";
 import { adminLeaveListSchema, approveLeaveSchema, cancelLeaveSchema, createLeaveSchema, leaveIdSchema, listMyLeaveSchema, rejectLeaveSchema } from "./leave.schemas.js";
-export const leaveRouter=Router(); leaveRouter.use(authenticate,requireNormalSession); leaveRouter.get("/types",requirePermission("leave.view_own"),leaveTypes); leaveRouter.post("/",requirePermission("leave.request"),validate(createLeaveSchema),createLeave); leaveRouter.get("/",requirePermission("leave.view_own"),validate(listMyLeaveSchema),myLeaves); leaveRouter.get("/summary",requirePermission("leave.view_own"),myLeaveSummary); leaveRouter.get("/:id",requirePermission("leave.view_own"),validate(leaveIdSchema),myLeave); leaveRouter.post("/:id/cancel",requirePermission("leave.request"),validate(cancelLeaveSchema),cancelLeave);
-export const adminLeaveRouter=Router(); adminLeaveRouter.use(authenticate,requireNormalSession); adminLeaveRouter.get("/",requirePermission("leave.view_all"),validate(adminLeaveListSchema),adminLeaves); adminLeaveRouter.get("/:id",requirePermission("leave.view_all"),validate(leaveIdSchema),adminLeave); adminLeaveRouter.post("/:id/approve",requirePermission("leave.approve"),validate(approveLeaveSchema),approveLeave); adminLeaveRouter.post("/:id/reject",requirePermission("leave.reject"),validate(rejectLeaveSchema),rejectLeave);
+
+export const leaveRouter = Router();
+leaveRouter.use(authenticate, requireNormalSession);
+leaveRouter.get("/types", requirePermission("leave.view_own"), leaveTypes);
+leaveRouter.post("/", requirePermission("leave.request"), validate(createLeaveSchema), createLeave);
+leaveRouter.get("/", requirePermission("leave.view_own"), validate(listMyLeaveSchema), myLeaves);
+leaveRouter.get("/summary", requirePermission("leave.view_own"), myLeaveSummary);
+leaveRouter.get("/:id", requirePermission("leave.view_own"), validate(leaveIdSchema), myLeave);
+leaveRouter.post("/:id/cancel", requirePermission("leave.request"), validate(cancelLeaveSchema), cancelLeave);
+
+export const adminLeaveRouter = Router();
+adminLeaveRouter.use(authenticate, requireNormalSession, requireOrgContext);
+adminLeaveRouter.get("/", requirePermission("leave.view_all"), validate(adminLeaveListSchema), adminLeaves);
+adminLeaveRouter.get("/:id", requirePermission("leave.view_all"), validate(leaveIdSchema), adminLeave);
+adminLeaveRouter.post("/:id/approve", requirePermission("leave.approve"), validate(approveLeaveSchema), approveLeave);
+adminLeaveRouter.post("/:id/reject", requirePermission("leave.reject"), validate(rejectLeaveSchema), rejectLeave);

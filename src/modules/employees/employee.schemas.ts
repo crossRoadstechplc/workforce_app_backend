@@ -3,10 +3,14 @@ import { z } from "zod";
 const employeeStatus = z.enum(["ACTIVE", "INACTIVE", "TERMINATED"]);
 const userStatus = z.enum(["ACTIVE", "INACTIVE"]);
 const optionalText = z.string().trim().max(200).optional().nullable();
+const optionalEmployeeCode = z.preprocess(
+  (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+  z.string().trim().min(2).max(50).transform((value) => value.toUpperCase()).optional()
+);
 
 export const createEmployeeSchema = z.object({
   email: z.string().trim().email().transform((value) => value.toLowerCase()),
-  employeeCode: z.string().trim().min(2).max(50).transform((value) => value.toUpperCase()),
+  employeeCode: optionalEmployeeCode,
   firstName: z.string().trim().min(1).max(100),
   middleName: optionalText,
   lastName: z.string().trim().min(1).max(100),

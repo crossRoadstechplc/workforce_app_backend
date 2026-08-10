@@ -3,6 +3,7 @@ import { Server } from "socket.io";
 import { env } from "../config/env.js";
 import { logger } from "../config/logger.js";
 import { verifyAccessToken } from "../modules/auth/token.service.js";
+import { ROLE } from "../shared/tenancy.js";
 
 let io: Server | undefined;
 
@@ -26,10 +27,16 @@ export function initializeSocket(server: HttpServer) {
   });
 
   io.on("connection", (socket) => {
-    const auth = socket.data.auth as { userId: string; roles: string[] };
+    const auth = socket.data.auth as { userId: string; roles: string[]; organizationId: string | null };
     socket.join(`user:${auth.userId}`);
-    for (const role of auth.roles) socket.join(`role:${role}`);
-    logger.debug({ socketId: socket.id, userId: auth.userId }, "Socket connected");
+    for (const role of auth.roles) {
+      if (role === ROLE.SUPER_ADMIN) {
+        socket.join(`role:${ROLE.SUPER_ADMIN}`);
+      } else if (auth.organizationId) {
+        socket.join(`org:${auth.organizationId}:role:${role}`);
+      }
+    }
+    logger.debug({ socketId: socket.id, userId: auth.userId, organizationId: auth.organizationId }, "Socket connected");
   });
   return io;
 }
@@ -38,6 +45,11 @@ export function emitToUser(userId: string, event: string, data: unknown) {
   io?.to(`user:${userId}`).emit(event, data);
 }
 
+/** @deprecated Prefer emitToOrgRole for tenant isolation */
 export function emitToRole(role: string, event: string, data: unknown) {
   io?.to(`role:${role}`).emit(event, data);
+}
+
+export function emitToOrgRole(organizationId: string, role: string, event: string, data: unknown) {
+  io?.to(`org:${organizationId}:role:${role}`).emit(event, data);
 }
