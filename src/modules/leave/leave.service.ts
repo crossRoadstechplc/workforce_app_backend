@@ -173,7 +173,15 @@ export const leaveService = {
     const where = {
       employee: { organizationId, ...employeeOfficeFilter(scope, input.officeId) },
       ...(input.status ? { status: input.status } : {}),
-      ...(input.employeeId ? { employeeId: input.employeeId } : {})
+      ...(input.employeeId ? { employeeId: input.employeeId } : {}),
+      ...(input.from || input.to
+        ? {
+            AND: [
+              ...(input.from ? [{ endDate: { gte: input.from } }] : []),
+              ...(input.to ? [{ startDate: { lte: input.to } }] : [])
+            ]
+          }
+        : {})
     };
     const skip = (input.page - 1) * input.pageSize;
     const [items, total] = await prisma.$transaction([

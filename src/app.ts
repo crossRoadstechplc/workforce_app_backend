@@ -12,7 +12,14 @@ import { employeeAdminRouter } from "./modules/employees/employee.routes.js";
 import { officeAdminRouter } from "./modules/offices/office.routes.js";
 import { scheduleAdminRouter } from "./modules/schedules/schedule.routes.js";
 import { attendanceRouter } from "./modules/attendance/attendance.routes.js";
-import { timesheetHistoryRouter, worksheetHistoryRouter, adminTimesheetRouter, adminWorksheetRouter } from "./modules/history/history.routes.js";
+import {
+  timesheetHistoryRouter,
+  worksheetHistoryRouter,
+  adminTimesheetRouter,
+  adminWorksheetRouter,
+  adminAttendanceRosterRouter,
+  adminLeaveRosterRouter
+} from "./modules/history/history.routes.js";
 import { leaveRouter, adminLeaveRouter } from "./modules/leave/leave.routes.js";
 import { notificationRouter } from "./modules/notifications/notification.routes.js";
 import { adminDashboardRouter, adminReportRouter } from "./modules/reports/report.routes.js";
@@ -42,7 +49,9 @@ app.use("/api/v1/worksheets", worksheetHistoryRouter);
 app.use("/api/v1/leave-requests", leaveRouter);
 app.use("/api/v1/notifications", notificationRouter);
 app.use("/api/v1/admin/timesheets", adminTimesheetRouter);
+app.use("/api/v1/admin/attendance", adminAttendanceRosterRouter);
 app.use("/api/v1/admin/worksheets", adminWorksheetRouter);
+app.use("/api/v1/admin/leave", adminLeaveRosterRouter);
 app.use("/api/v1/admin/leave-requests", adminLeaveRouter);
 app.use("/api/v1/admin/dashboard", adminDashboardRouter);
 app.use("/api/v1/admin/reports", adminReportRouter);

@@ -1,5 +1,6 @@
 import type { RequestHandler } from "express";
 import { historyService } from "./history.service.js";
+import { rosterService } from "./roster.service.js";
 import { auditContextFromRequest } from "../../shared/audit.js";
 import { getOfficeScope } from "../../shared/office-scope.js";
 import { requireOrganizationId } from "../../shared/tenancy.js";
@@ -95,6 +96,54 @@ export const reviewWorksheet: RequestHandler = async (req, res, next) => {
     const scope = getOfficeScope(req.auth);
     res.json({
       data: await historyService.reviewWorksheet(requireOrganizationId(req.auth), paramId(req.params.id!), req.body, auditContextFromRequest(req), scope)
+    });
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const attendanceDayRoster: RequestHandler = async (req, res, next) => {
+  try {
+    const scope = getOfficeScope(req.auth);
+    res.json({
+      data: await rosterService.attendanceDayRoster(requireOrganizationId(req.auth), req.query as any, scope)
+    });
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const attendanceMonthSummary: RequestHandler = async (req, res, next) => {
+  try {
+    const scope = getOfficeScope(req.auth);
+    res.json({
+      data: await rosterService.attendanceMonthSummary(
+        requireOrganizationId(req.auth),
+        { year: Number(req.query.year), month: Number(req.query.month), officeId: req.query.officeId as string | undefined },
+        scope
+      )
+    });
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const leaveDayRoster: RequestHandler = async (req, res, next) => {
+  try {
+    const scope = getOfficeScope(req.auth);
+    res.json({
+      data: await rosterService.leaveDayRoster(requireOrganizationId(req.auth), req.query as any, scope)
+    });
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const worksheetDayRoster: RequestHandler = async (req, res, next) => {
+  try {
+    const scope = getOfficeScope(req.auth);
+    res.json({
+      data: await rosterService.worksheetDayRoster(requireOrganizationId(req.auth), req.query as any, scope)
     });
   } catch (e) {
     next(e);
