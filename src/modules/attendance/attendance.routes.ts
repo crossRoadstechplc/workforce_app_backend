@@ -1,11 +1,14 @@
 import { Router } from "express";
+import express from "express";
 import { authenticate, requireNormalSession, requirePermission } from "../../middleware/authenticate.js";
 import { validate } from "../../shared/validate.js";
-import { checkInSchema, checkOutSchema, previewCheckInSchema } from "./attendance.schemas.js";
-import { checkIn, checkOut, currentAttendance, previewCheckIn } from "./attendance.controller.js";
+import { checkInSchema, checkOutSchema, previewCheckInSchema, uploadAttendancePhotoSchema } from "./attendance.schemas.js";
+import { checkIn, checkOut, currentAttendance, attendanceOfficeContext, previewCheckIn, uploadAttendancePhoto } from "./attendance.controller.js";
 export const attendanceRouter = Router();
 attendanceRouter.use(authenticate, requireNormalSession);
 attendanceRouter.get("/current", requirePermission("attendance.view_own"), currentAttendance);
+attendanceRouter.get("/context", requirePermission("attendance.view_own"), attendanceOfficeContext);
 attendanceRouter.post("/check-in/preview", requirePermission("attendance.check_in"), validate(previewCheckInSchema), previewCheckIn);
+attendanceRouter.post("/photos", express.json({ limit: "8mb" }), requirePermission("attendance.view_own"), validate(uploadAttendancePhotoSchema), uploadAttendancePhoto);
 attendanceRouter.post("/check-in", requirePermission("attendance.check_in"), validate(checkInSchema), checkIn);
 attendanceRouter.post("/check-out", requirePermission("attendance.check_out"), validate(checkOutSchema), checkOut);

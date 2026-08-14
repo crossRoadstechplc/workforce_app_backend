@@ -38,11 +38,31 @@ async function identity(userId: string, db: IdentityDb = prisma) {
     throw new AppError(403, "NO_OFFICE_ASSIGNMENT", "Office administrator has no assigned offices");
   }
 
-  return { user, roles, permissions, organizationId, organization, officeIds, offices };
+  const employeeRecord = await prisma.employee.findUnique({
+    where: { userId },
+    select: { firstName: true, lastName: true, employeeCode: true }
+  });
+  const employee = employeeRecord
+    ? {
+        firstName: employeeRecord.firstName,
+        lastName: employeeRecord.lastName,
+        employeeCode: employeeRecord.employeeCode,
+        displayName: buildEmployeeDisplayName(employeeRecord.firstName, employeeRecord.lastName, user.email)
+      }
+    : null;
+
+  return { user, roles, permissions, organizationId, organization, officeIds, offices, employee };
+}
+
+function buildEmployeeDisplayName(firstName: string, lastName: string, email: string) {
+  const full = `${firstName} ${lastName}`.trim();
+  if (full) return full;
+  const prefix = email.split("@")[0]?.trim();
+  return prefix || email;
 }
 
 async function issueSession(userId: string, deviceId?: string, db: SessionDb = prisma) {
-  const { user, roles, permissions, organizationId, organization, officeIds, offices } = await identity(userId, db);
+  const { user, roles, permissions, organizationId, organization, officeIds, offices, employee } = await identity(userId, db);
   const restricted = user.mustChangePassword;
   const accessToken = await signAccessToken({
     userId,
@@ -65,13 +85,14 @@ async function issueSession(userId: string, deviceId?: string, db: SessionDb = p
     accessToken,
     refreshToken,
     mustChangePassword: restricted,
-    user: { id: user.id, email: user.email, roles, organizationId, organization, officeIds, offices }
+    user: { id: user.id, email: user.email, roles, organizationId, organization, officeIds, offices, employee }
   };
 }
 
 export const authService = {
   async login(input: { login: string; password: string; deviceId?: string; organizationSlug?: string }) {
     const normalizedLogin = input.login.trim();
+    const password = input.password.trim();
     const email = normalizedLogin.toLowerCase();
     const code = normalizedLogin.toUpperCase();
 
@@ -79,7 +100,7 @@ export const authService = {
     const byEmail = await prisma.user.findFirst({ where: { email }, select: { id: true, status: true, passwordHash: true } });
     if (byEmail) {
       userId = byEmail.id;
-      if (byEmail.status !== "ACTIVE" || !(await argon2.verify(byEmail.passwordHash, input.password))) {
+      if (byEmail.status !== "ACTIVE" || !(await argon2.verify(byEmail.passwordHash, password))) {
         throw new AppError(401, "INVALID_CREDENTIALS", "Invalid login or password");
       }
     } else {
@@ -97,7 +118,7 @@ export const authService = {
           throw new AppError(400, "ORG_SLUG_REQUIRED", "Multiple organizations use this employee code. Provide organizationSlug.");
         }
       }
-      if (employee.user.status !== "ACTIVE" || !(await argon2.verify(employee.user.passwordHash, input.password))) {
+      if (employee.user.status !== "ACTIVE" || !(await argon2.verify(employee.user.passwordHash, password))) {
         throw new AppError(401, "INVALID_CREDENTIALS", "Invalid login or password");
       }
       userId = employee.user.id;

@@ -358,6 +358,7 @@ model AttendanceLocation {
   isInsideRadius           Boolean                @map("is_inside_radius")
   capturedAt               DateTime               @map("captured_at") @db.Timestamptz(6)
   serverReceivedAt         DateTime               @map("server_received_at") @db.Timestamptz(6)
+  photoUrl                 String?                @map("photo_url")
   createdAt                DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
   timesheet                Timesheet              @relation(fields: [timesheetId], references: [id], onDelete: Cascade)
   @@index([timesheetId, type])

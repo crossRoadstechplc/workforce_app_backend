@@ -130,7 +130,15 @@ export async function bootstrap(): Promise<BootstrapResult> {
     });
     console.log(`Seeded SUPER_ADMIN: ${superAdminEmail}`);
   } else {
-    console.log(`SUPER_ADMIN already exists: ${existingSuper.user.email}`);
+    if (process.env.NODE_ENV !== "production") {
+      await prisma.user.update({
+        where: { id: existingSuper.user.id },
+        data: { passwordHash, mustChangePassword: true }
+      });
+      console.log(`Refreshed SUPER_ADMIN dev password: ${existingSuper.user.email}`);
+    } else {
+      console.log(`SUPER_ADMIN already exists: ${existingSuper.user.email}`);
+    }
   }
 
   recordManifest({

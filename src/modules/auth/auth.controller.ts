@@ -22,7 +22,8 @@ export const me: RequestHandler = async (req, res) => {
     organizationId: result.organizationId,
     organization: result.organization,
     officeIds: result.officeIds,
-    offices: result.offices
+    offices: result.offices,
+    employee: result.employee
   });
 };
 export const logout: RequestHandler = async (req, res) => {

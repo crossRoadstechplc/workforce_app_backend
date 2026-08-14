@@ -14,7 +14,12 @@ const schema = z.object({
   MISSING_CHECKOUT_GRACE_MINUTES: z.coerce.number().int().min(0).default(120),
   FIREBASE_PROJECT_ID: z.string().optional(),
   FIREBASE_CLIENT_EMAIL: z.string().optional(),
-  FIREBASE_PRIVATE_KEY: z.string().optional()
+  FIREBASE_PRIVATE_KEY: z.string().optional(),
+  CLOUDINARY_CLOUD_NAME: z.string().optional(),
+  CLOUDINARY_API_KEY: z.string().optional(),
+  CLOUDINARY_API_SECRET: z.string().optional(),
+  CLOUDINARY_UPLOAD_FOLDER: z.string().default("workforce/attendance"),
+  ATTENDANCE_PHOTO_REQUIRED: z.coerce.boolean().default(true)
 });
 
 export const env = schema.parse(process.env);
