@@ -2,6 +2,7 @@ import { DateTime } from "luxon";
 import { prisma } from "../../database/prisma.js";
 import { AppError } from "../../shared/errors/app-error.js";
 import { employeeOfficeFilter, type OfficeScope } from "../../shared/office-scope.js";
+import { formatWorkDateKey } from "../../shared/work-date.js";
 
 type ScheduleInfo = {
   workingDays: number[];
@@ -267,7 +268,7 @@ export const rosterService = {
 
       const empTimesheets = timesheetsByEmployee.get(e.id) ?? [];
       const empLeaves = leavesByEmployee.get(e.id) ?? [];
-      const timesheetByDate = new Map(empTimesheets.map((t) => [t.workDate.toISOString().slice(0, 10), t]));
+      const timesheetByDate = new Map(empTimesheets.map((t) => [formatWorkDateKey(t.workDate), t]));
 
       for (let d = monthStart; d <= lastDay; d = d.plus({ days: 1 })) {
         const key = d.toISODate()!;

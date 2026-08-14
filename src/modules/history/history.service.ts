@@ -6,6 +6,7 @@ import { deliverNotification } from "../notifications/notification.service.js";
 import { emitToOrgRole, emitToUser } from "../../realtime/socket.server.js";
 import { ROLE, assertSameOrganization } from "../../shared/tenancy.js";
 import { assertOfficeInScope, employeeOfficeFilter, type OfficeScope } from "../../shared/office-scope.js";
+import { formatWorkDateKey, mapFormattedWorkDates, withFormattedWorkDate } from "../../shared/work-date.js";
 
 async function employeeForUser(userId: string) {
   const e = await prisma.employee.findUnique({ where: { userId } });
@@ -31,7 +32,7 @@ export const historyService = {
       }),
       prisma.timesheet.count({ where })
     ]);
-    return { items, meta: { page: input.page, pageSize: input.pageSize, total, totalPages: Math.ceil(total / input.pageSize) } };
+    return { items: mapFormattedWorkDates(items), meta: { page: input.page, pageSize: input.pageSize, total, totalPages: Math.ceil(total / input.pageSize) } };
   },
   async myTimesheet(userId: string, id: string) {
     const e = await employeeForUser(userId);
@@ -40,13 +41,14 @@ export const historyService = {
       include: { locations: true, lateReason: true, worksheet: true, corrections: true }
     });
     if (!item) throw new AppError(404, "TIMESHEET_NOT_FOUND", "Timesheet not found");
-    return item;
+    return withFormattedWorkDate(item);
   },
   async myTimesheetCalendar(userId: string, year: number, month: number) {
     const e = await employeeForUser(userId);
     const start = new Date(Date.UTC(year, month - 1, 1));
     const end = new Date(Date.UTC(year, month, 1));
-    return prisma.timesheet.findMany({
+    return mapFormattedWorkDates(
+      await prisma.timesheet.findMany({
       where: { employeeId: e.id, workDate: { gte: start, lt: end } },
       orderBy: { workDate: "asc" },
       select: {
@@ -61,7 +63,8 @@ export const historyService = {
         isMissingCheckout: true,
         worksheet: { select: { id: true } }
       }
-    });
+    })
+    );
   },
   async myWorksheets(userId: string, input: any) {
     const e = await employeeForUser(userId);
@@ -77,23 +80,25 @@ export const historyService = {
       }),
       prisma.worksheet.count({ where })
     ]);
-    return { items, meta: { page: input.page, pageSize: input.pageSize, total, totalPages: Math.ceil(total / input.pageSize) } };
+    return { items: mapFormattedWorkDates(items), meta: { page: input.page, pageSize: input.pageSize, total, totalPages: Math.ceil(total / input.pageSize) } };
   },
   async myWorksheetCalendar(userId: string, year: number, month: number) {
     const e = await employeeForUser(userId);
     const start = new Date(Date.UTC(year, month - 1, 1));
     const end = new Date(Date.UTC(year, month, 1));
-    return prisma.worksheet.findMany({
+    return mapFormattedWorkDates(
+      await prisma.worksheet.findMany({
       where: { employeeId: e.id, workDate: { gte: start, lt: end } },
       orderBy: { workDate: "asc" },
       select: { id: true, workDate: true, status: true, submittedAt: true }
-    });
+    })
+    );
   },
   async myWorksheet(userId: string, id: string) {
     const e = await employeeForUser(userId);
     const item = await prisma.worksheet.findFirst({ where: { id, employeeId: e.id }, include: { timesheet: true } });
     if (!item) throw new AppError(404, "WORKSHEET_NOT_FOUND", "Worksheet not found");
-    return item;
+    return withFormattedWorkDate(item);
   },
   async adminTimesheets(organizationId: string, input: any, scope: OfficeScope) {
     const where = {
@@ -191,7 +196,7 @@ export const historyService = {
           userId: current.employee.userId,
           type: "ATTENDANCE_CORRECTED",
           title: "Attendance corrected",
-          message: `Your attendance for ${current.workDate.toISOString().slice(0, 10)} was corrected by an administrator.`,
+          message: `Your attendance for ${formatWorkDateKey(current.workDate)} was corrected by an administrator.`,
           relatedEntityType: "Timesheet",
           relatedEntityId: id
         }

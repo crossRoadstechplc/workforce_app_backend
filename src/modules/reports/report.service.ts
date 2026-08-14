@@ -4,6 +4,7 @@ import { AppError } from "../../shared/errors/app-error.js";
 import { auditJson, type AuditContext } from "../../shared/audit.js";
 import { assertSameOrganization } from "../../shared/tenancy.js";
 import { assertOfficeInScope, employeeOfficeFilter, type OfficeScope } from "../../shared/office-scope.js";
+import { formatWorkDateKey, mapFormattedWorkDates } from "../../shared/work-date.js";
 
 function employeeScope(organizationId: string, scope: OfficeScope, officeId?: string) {
   return { organizationId, ...employeeOfficeFilter(scope, officeId) };
@@ -115,7 +116,7 @@ export const reportService = {
       byDate.set(key, { date: key, attendance: 0, late: 0, missingCheckout: 0, approvedLeaveRequests: 0 });
     }
     for (const row of rows) {
-      const key = row.workDate.toISOString().slice(0, 10);
+      const key = formatWorkDateKey(row.workDate);
       const item = byDate.get(key);
       if (!item) continue;
       item.attendance++;
@@ -188,7 +189,7 @@ export const reportService = {
       }),
       prisma.timesheet.count({ where })
     ]);
-    return { items, meta: pagination(input.page, input.pageSize, total) };
+    return { items: mapFormattedWorkDates(items), meta: pagination(input.page, input.pageSize, total) };
   },
 
   async worksheetReport(organizationId: string, input: any, scope: OfficeScope) {
@@ -213,7 +214,7 @@ export const reportService = {
       }),
       prisma.worksheet.count({ where })
     ]);
-    return { items, meta: pagination(input.page, input.pageSize, total) };
+    return { items: mapFormattedWorkDates(items), meta: pagination(input.page, input.pageSize, total) };
   },
 
   async leaveReport(organizationId: string, input: any, scope: OfficeScope) {
@@ -274,10 +275,10 @@ export const reportService = {
     const approvedLeaveDays = leaveRequests.filter((x) => x.status === "APPROVED").reduce((n, x) => n + Number(x.numberOfDays), 0);
     return {
       employee,
-      period: { from: start.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) },
+      period: { from: formatWorkDateKey(start), to: formatWorkDateKey(to) },
       totals: { ...totals, attendanceDays: timesheets.length, worksheetsSubmitted: worksheets.length, approvedLeaveDays },
-      timesheets,
-      worksheets,
+      timesheets: mapFormattedWorkDates(timesheets),
+      worksheets: mapFormattedWorkDates(worksheets),
       leaveRequests
     };
   }

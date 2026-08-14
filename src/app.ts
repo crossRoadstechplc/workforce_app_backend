@@ -3,7 +3,7 @@ import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { pinoHttp } from "pino-http";
-import { env } from "./config/env.js";
+import { buildCorsOptions } from "./config/cors.js";
 import { logger } from "./config/logger.js";
 import { requestId } from "./middleware/request-id.js";
 import { errorHandler } from "./middleware/error-handler.js";
@@ -31,10 +31,18 @@ export const app = express();
 app.disable("x-powered-by");
 app.use(requestId);
 app.use(pinoHttp({ logger }));
-app.use(helmet());
-app.use(cors({ origin: env.CORS_ORIGINS === "*" ? true : env.CORS_ORIGINS.split(","), credentials: true }));
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" }
+}));
+app.use(cors(buildCorsOptions()));
 app.use(express.json({ limit: "1mb" }));
-app.use(rateLimit({ windowMs: 60_000, limit: 120, standardHeaders: true, legacyHeaders: false }));
+app.use(rateLimit({
+  windowMs: 60_000,
+  limit: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: (req) => req.method === "OPTIONS"
+}));
 app.get("/api/v1/health", (_req, res) => res.json({ status: "ok", timestamp: new Date().toISOString() }));
 app.use("/api/v1/auth", authRouter);
 app.use("/api/v1/platform", platformRouter);

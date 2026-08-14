@@ -1,5 +1,6 @@
 import { DateTime } from "luxon";
 import type { PrismaClient } from "../../../src/generated/prisma/client.js";
+import { formatWorkDateKey } from "../../../src/shared/work-date.js";
 import type { OrganizationFixture } from "../types.js";
 import type { EmployeeMap } from "./employee.js";
 import type { OfficeMap, ScheduleMap } from "./office.js";
@@ -199,7 +200,7 @@ export async function seedAttendanceScenarios(
       await prisma.worksheet.upsert({
         where: { timesheetId: timesheet.id },
         update: {
-          workDescription: `Demo work for ${scenario.employeeCode} on ${data.workDate.toISOString().slice(0, 10)}`,
+          workDescription: `Demo work for ${scenario.employeeCode} on ${formatWorkDateKey(data.workDate)}`,
           status: worksheetStatus,
           reviewedBy: scenario.worksheetReviewed ? orgAdminUserId : null,
           reviewedAt: scenario.worksheetReviewed ? new Date() : null
@@ -208,7 +209,7 @@ export async function seedAttendanceScenarios(
           timesheetId: timesheet.id,
           employeeId: emp.id,
           workDate: data.workDate,
-          workDescription: `Demo work for ${scenario.employeeCode} on ${data.workDate.toISOString().slice(0, 10)}`,
+          workDescription: `Demo work for ${scenario.employeeCode} on ${formatWorkDateKey(data.workDate)}`,
           status: worksheetStatus,
           submittedAt: data.actualCheckOut,
           reviewedBy: scenario.worksheetReviewed ? orgAdminUserId : null,

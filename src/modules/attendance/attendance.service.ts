@@ -5,6 +5,7 @@ import { AppError } from "../../shared/errors/app-error.js";
 import { deliverNotification } from "../notifications/notification.service.js";
 import { emitToOrgRole, emitToUser } from "../../realtime/socket.server.js";
 import { ROLE } from "../../shared/tenancy.js";
+import { formatWorkDateKey, todayWorkDate, todayWorkDateKey, workDateFromKey } from "../../shared/work-date.js";
 
 type LocationInput = { latitude: number; longitude: number; accuracyMeters: number; capturedAt: Date };
 type CheckInInput = LocationInput & { idempotencyKey: string; photoUrl?: string; lateReasonType?: string; lateReasonDescription?: string };
@@ -96,18 +97,10 @@ function attendanceClock(employee: Awaited<ReturnType<typeof employeeContext>>, 
   };
 }
 
-function toWorkDateKey(workDate: Date) {
-  return workDate.toISOString().slice(0, 10);
-}
-
-function todayKey(timezone: string) {
-  return DateTime.now().setZone(timezone).toISODate()!;
-}
-
 function formatTimesheetResponse<T extends { workDate: Date; isOpen: boolean; timezone: string }>(timesheet: T | null) {
   if (!timesheet) return null;
-  const workDate = toWorkDateKey(timesheet.workDate);
-  const today = todayKey(timesheet.timezone);
+  const workDate = formatWorkDateKey(timesheet.workDate);
+  const today = todayWorkDateKey(timesheet.timezone);
   return {
     ...timesheet,
     workDate,
@@ -129,7 +122,7 @@ function computeCheckoutMetrics(
     0,
     Math.floor((open.scheduledCheckOut.getTime() - open.actualCheckIn.getTime()) / 60000)
   );
-  const workDateKey = toWorkDateKey(open.workDate);
+  const workDateKey = formatWorkDateKey(open.workDate);
   const checkoutDateKey = DateTime.fromJSDate(now, { zone: open.timezone }).toISODate()!;
   const isCrossDayCheckout = checkoutDateKey > workDateKey;
   const checkoutAfterScheduled = now.getTime() > open.scheduledCheckOut.getTime();
@@ -177,7 +170,7 @@ export const attendanceService = {
     // After checkout, still return today's timesheet so the app shows
     // "completed" instead of offering another check-in.
     const zone = employee.office!.timezone || employee.schedule!.timezone;
-    const workDate = DateTime.now().setZone(zone).startOf("day").toJSDate();
+    const workDate = todayWorkDate(zone);
     const todayTimesheet = await prisma.timesheet.findFirst({
       where: { employeeId: employee.id, workDate },
       include: { lateReason: true, locations: true },
@@ -235,7 +228,7 @@ export const attendanceService = {
       const timesheet = await tx.timesheet.create({
         data: {
           employeeId: employee.id, officeId: employee.office!.id, scheduleId: employee.schedule!.id,
-          workDate: DateTime.fromISO(clock.workDate, { zone: clock.zone }).startOf("day").toJSDate(),
+          workDate: workDateFromKey(clock.workDate),
           scheduledCheckIn: clock.scheduledIn.toUTC().toJSDate(), scheduledCheckOut: clock.scheduledOut.toUTC().toJSDate(), actualCheckIn: now,
           lateMinutes: clock.lateMinutes, isLate: clock.isLate, status: clock.isLate ? "PRESENT_LATE" : "PRESENT_ON_TIME",
           checkInIdempotencyKey: input.idempotencyKey,
@@ -273,7 +266,7 @@ export const attendanceService = {
     attendancePhotoService.validatePhotoUrl(input.photoUrl);
     const metrics = computeCheckoutMetrics(open, now);
     const completedStatus = open.isLate ? "COMPLETED_LATE" : "COMPLETED_ON_TIME";
-    const closedCarriedOverShift = toWorkDateKey(open.workDate) < todayKey(open.timezone);
+    const closedCarriedOverShift = formatWorkDateKey(open.workDate) < todayWorkDateKey(open.timezone);
 
     const result = await prisma.$transaction(async (tx) => {
       const current = await tx.timesheet.findUnique({ where: { id: open.id } });
@@ -299,7 +292,7 @@ export const attendanceService = {
           type: "CHECK_OUT_SUCCESS",
           title: closedCarriedOverShift ? "Previous shift closed" : "Checkout successful",
           message: closedCarriedOverShift
-            ? `Your open shift from ${toWorkDateKey(open.workDate)} is closed. Worked time: ${metrics.workedMinutes} minutes. You can check in for today.`
+            ? `Your open shift from ${formatWorkDateKey(open.workDate)} is closed. Worked time: ${metrics.workedMinutes} minutes. You can check in for today.`
             : `You checked out successfully. Worked time: ${metrics.workedMinutes} minutes.`,
           relatedEntityType: "Timesheet",
           relatedEntityId: timesheet.id
