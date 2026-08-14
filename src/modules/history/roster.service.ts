@@ -112,7 +112,8 @@ export const rosterService = {
         where: { employeeId: { in: employeeIds }, workDate: { gte: start, lt: end } },
         include: {
           lateReason: true,
-          worksheet: { select: { id: true, status: true } }
+          worksheet: { select: { id: true, status: true } },
+          locations: { select: { type: true, photoUrl: true } }
         }
       }),
       prisma.leaveRequest.findMany({
@@ -161,7 +162,9 @@ export const rosterService = {
               isOpen: timesheet.isOpen,
               isLate: timesheet.isLate,
               isMissingCheckout: timesheet.isMissingCheckout,
-              lateReason: timesheet.lateReason
+              lateReason: timesheet.lateReason,
+              checkInPhotoUrl: timesheet.locations.find((l) => l.type === "CHECK_IN")?.photoUrl ?? null,
+              checkOutPhotoUrl: timesheet.locations.find((l) => l.type === "CHECK_OUT")?.photoUrl ?? null
             }
           : null,
         leave: leave

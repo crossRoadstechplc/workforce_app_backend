@@ -184,12 +184,23 @@ export const leaveService = {
         : {})
     };
     const skip = (input.page - 1) * input.pageSize;
+    const countWhere = { employee: { organizationId, ...employeeOfficeFilter(scope, input.officeId) } };
     const [items, total] = await prisma.$transaction([
       prisma.leaveRequest.findMany({
         where,
         include: {
           leaveType: true,
-          employee: { include: { user: { select: { email: true } } } },
+          employee: {
+            select: {
+              id: true,
+              employeeCode: true,
+              firstName: true,
+              lastName: true,
+              department: true,
+              officeId: true,
+              office: { select: { id: true, name: true } }
+            }
+          },
           decisions: { orderBy: { decidedAt: "desc" } }
         },
         orderBy: { requestedAt: "desc" },
@@ -198,7 +209,22 @@ export const leaveService = {
       }),
       prisma.leaveRequest.count({ where })
     ]);
-    return { items, meta: { page: input.page, pageSize: input.pageSize, total, totalPages: Math.ceil(total / input.pageSize) } };
+    const grouped = await prisma.leaveRequest.groupBy({
+      by: ["status"],
+      where: countWhere,
+      _count: { _all: true },
+      orderBy: { status: "asc" }
+    });
+    const counts = { total: 0, pending: 0, approved: 0, rejected: 0, cancelled: 0 };
+    for (const g of grouped) {
+      const n = g._count._all;
+      counts.total += n;
+      if (g.status === "PENDING") counts.pending = n;
+      if (g.status === "APPROVED") counts.approved = n;
+      if (g.status === "REJECTED") counts.rejected = n;
+      if (g.status === "CANCELLED") counts.cancelled = n;
+    }
+    return { items, meta: { page: input.page, pageSize: input.pageSize, total, totalPages: Math.ceil(total / input.pageSize) }, counts };
   },
   async adminGet(organizationId: string, id: string, scope: OfficeScope) {
     const item = await prisma.leaveRequest.findUnique({
