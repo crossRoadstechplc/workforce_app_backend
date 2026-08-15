@@ -9,6 +9,7 @@ import { pageMeta, pagination } from "../../shared/pagination.js";
 import { isOfficeAdmin, isOrgAdmin, isSuperAdmin, type AuthContext } from "../../shared/tenancy.js";
 import { assertOfficeInScope, getOfficeScope, type OfficeScope } from "../../shared/office-scope.js";
 import { employeeService } from "../employees/employee.service.js";
+import { logger } from "../../config/logger.js";
 import { sendMail } from "../mail/mailer.js";
 import { employeeInviteEmail, officeAdminInviteEmail, orgAdminInviteEmail } from "../mail/templates.js";
 
@@ -96,6 +97,16 @@ async function officeNamesFor(officeIds: string[]) {
 
 export async function deliverInvite(invite: Invite & { organization: { name: string } }, token: string) {
   const href = inviteUrl(invite.type, token);
+  logger.info(
+    {
+      inviteId: invite.id,
+      type: invite.type,
+      to: invite.email,
+      organizationId: invite.organizationId,
+      href
+    },
+    "Delivering invite email"
+  );
   try {
     if (invite.type === "ORG_ADMIN") {
       const mail = orgAdminInviteEmail({ companyName: invite.organization.name, href });
@@ -111,9 +122,21 @@ export async function deliverInvite(invite: Invite & { organization: { name: str
       const mail = employeeInviteEmail({ companyName: invite.organization.name, href });
       await sendMail(invite.email, mail.subject, mail.html);
     }
+    logger.info({ inviteId: invite.id, to: invite.email, type: invite.type }, "Invite email delivered");
     return { emailSent: true as const };
   } catch (error) {
-    const message = error instanceof AppError ? error.message : "Could not send invite email";
+    const message = error instanceof AppError ? error.message : error instanceof Error ? error.message : "Could not send invite email";
+    logger.error(
+      {
+        err: error,
+        inviteId: invite.id,
+        to: invite.email,
+        type: invite.type,
+        href,
+        emailError: message
+      },
+      "Invite email was not sent"
+    );
     return { emailSent: false as const, emailError: message };
   }
 }

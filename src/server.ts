@@ -5,10 +5,14 @@ import { env } from "./config/env.js";
 import { logger } from "./config/logger.js";
 import { prisma } from "./database/prisma.js";
 import { initializeSocket } from "./realtime/socket.server.js";
+import { logMailStartup } from "./modules/mail/mailer.js";
 
 const server = createServer(app);
 initializeSocket(server);
-server.listen(env.PORT, () => logger.info({ port: env.PORT }, "API started"));
+server.listen(env.PORT, () => {
+  logger.info({ port: env.PORT }, "API started");
+  void logMailStartup();
+});
 
 async function shutdown(signal: string) {
   logger.info({ signal }, "Shutting down");
