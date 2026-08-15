@@ -3,10 +3,19 @@ import { z } from "zod";
 export const organizationCreateSchema = z.object({
   name: z.string().trim().min(2).max(120),
   slug: z.string().trim().min(2).max(80).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Slug must be lowercase alphanumeric with hyphens"),
-  isActive: z.boolean().optional()
+  isActive: z.boolean().optional(),
+  adminEmail: z.string().trim().email().transform((value) => value.toLowerCase()).optional(),
+  sendInvite: z.boolean().optional()
+}).refine((value) => !value.sendInvite || !!value.adminEmail, {
+  message: "adminEmail is required when sendInvite is true",
+  path: ["adminEmail"]
 });
 
-export const organizationUpdateSchema = organizationCreateSchema.partial();
+export const organizationUpdateSchema = z.object({
+  name: z.string().trim().min(2).max(120),
+  slug: z.string().trim().min(2).max(80).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Slug must be lowercase alphanumeric with hyphens"),
+  isActive: z.boolean()
+}).partial();
 
 export const organizationStatusSchema = z.object({
   isActive: z.boolean(),
@@ -27,7 +36,8 @@ export const organizationParamsSchema = z.object({
 export const orgAdminCreateSchema = z.object({
   organizationId: z.string().uuid(),
   email: z.string().email().transform((v) => v.toLowerCase()),
-  temporaryPassword: z.string().min(10).optional()
+  temporaryPassword: z.string().min(10).optional(),
+  deliveryMethod: z.enum(["SHOW_PASSWORD", "SEND_EMAIL"]).default("SHOW_PASSWORD")
 });
 
 export const orgAdminListSchema = z.object({

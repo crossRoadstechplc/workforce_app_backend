@@ -26,6 +26,7 @@ import { adminDashboardRouter, adminReportRouter } from "./modules/reports/repor
 import { platformRouter } from "./modules/platform/platform.routes.js";
 import { officeAdminsRouter } from "./modules/office-admins/office-admin.routes.js";
 import { tenantContextRouter } from "./modules/context/tenant-context.routes.js";
+import { adminInviteRouter, publicInviteRouter } from "./modules/invites/invite.routes.js";
 
 export const app = express();
 app.disable("x-powered-by");
@@ -45,6 +46,8 @@ app.use(rateLimit({
 }));
 app.get("/api/v1/health", (_req, res) => res.json({ status: "ok", timestamp: new Date().toISOString() }));
 app.use("/api/v1/auth", authRouter);
+app.use("/api/v1/invites", publicInviteRouter);
+app.use("/api/v1/admin/invites", adminInviteRouter);
 app.use("/api/v1/platform", platformRouter);
 app.use("/api/v1/admin/office-admins", officeAdminsRouter);
 app.use("/api/v1/admin/context", tenantContextRouter);

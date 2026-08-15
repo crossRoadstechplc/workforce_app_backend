@@ -1,10 +1,12 @@
 import { Router } from "express";
 import { authenticate, requireNormalSession, requireOrgContext, requirePermission } from "../../middleware/authenticate.js";
 import { changeEmployeeStatus, createEmployee, getEmployee, listEmployees, resetEmployeePassword, updateEmployee } from "./employee.controller.js";
+import { createEmployeeInvite } from "../invites/invite.controller.js";
 
 export const employeeAdminRouter = Router();
 employeeAdminRouter.use(authenticate, requireNormalSession, requireOrgContext);
 employeeAdminRouter.post("/", requirePermission("employee.create"), createEmployee);
+employeeAdminRouter.post("/invites", requirePermission("employee.create"), createEmployeeInvite);
 employeeAdminRouter.get("/", requirePermission("employee.view"), listEmployees);
 employeeAdminRouter.get("/:employeeId", requirePermission("employee.view"), getEmployee);
 employeeAdminRouter.patch("/:employeeId", requirePermission("employee.update"), updateEmployee);

@@ -3,7 +3,8 @@ import { z } from "zod";
 export const createOfficeAdminSchema = z.object({
   email: z.string().email(),
   officeIds: z.array(z.string().uuid()).min(1),
-  temporaryPassword: z.string().min(10).optional()
+  temporaryPassword: z.string().min(10).optional(),
+  deliveryMethod: z.enum(["SHOW_PASSWORD", "SEND_EMAIL"]).default("SHOW_PASSWORD")
 });
 
 export const updateOfficeAdminOfficesSchema = z.object({

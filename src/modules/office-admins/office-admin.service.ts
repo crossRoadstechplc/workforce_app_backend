@@ -5,6 +5,7 @@ import { auditJson, type AuditContext } from "../../shared/audit.js";
 import { generateTemporaryPassword } from "../../shared/password.js";
 import { pageMeta, pagination } from "../../shared/pagination.js";
 import { ROLE } from "../../shared/tenancy.js";
+import { createInviteInTx, deliverInvite } from "../invites/invite.service.js";
 
 async function assertOfficesInOrg(organizationId: string, officeIds: string[]) {
   const offices = await prisma.office.findMany({ where: { id: { in: officeIds }, organizationId, isActive: true } });
@@ -12,12 +13,17 @@ async function assertOfficesInOrg(organizationId: string, officeIds: string[]) {
 }
 
 export const officeAdminService = {
-  async create(organizationId: string, input: { email: string; officeIds: string[]; temporaryPassword?: string }, audit: AuditContext) {
+  async create(
+    organizationId: string,
+    input: { email: string; officeIds: string[]; temporaryPassword?: string; deliveryMethod?: "SHOW_PASSWORD" | "SEND_EMAIL" },
+    audit: AuditContext
+  ) {
     await assertOfficesInOrg(organizationId, input.officeIds);
+    const deliveryMethod = input.deliveryMethod ?? "SHOW_PASSWORD";
     const temporaryPassword = input.temporaryPassword ?? generateTemporaryPassword();
     const passwordHash = await argon2.hash(temporaryPassword, { type: argon2.argon2id });
 
-    const user = await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       const role = await tx.role.findUnique({ where: { name: ROLE.OFFICE_ADMIN } });
       if (!role) throw new AppError(500, "ROLE_NOT_CONFIGURED", "OFFICE_ADMIN role is not configured");
 
@@ -50,10 +56,26 @@ export const officeAdminService = {
           userAgent: audit.userAgent
         }
       });
-      return created;
+
+      if (deliveryMethod !== "SEND_EMAIL") return { user: created, invite: null as Awaited<ReturnType<typeof createInviteInTx>>["invite"] | null, token: null as string | null };
+
+      const issued = await createInviteInTx(tx, {
+        type: "OFFICE_ADMIN",
+        email: created.email,
+        organizationId,
+        invitedByUserId: audit.actorUserId,
+        userId: created.id,
+        officeIds: input.officeIds
+      });
+      return { user: created, invite: issued.invite, token: issued.token };
     });
 
-    return { user, temporaryPassword };
+    if (deliveryMethod === "SEND_EMAIL" && result.invite && result.token) {
+      const delivery = await deliverInvite(result.invite, result.token);
+      return { user: result.user, emailSent: delivery.emailSent, inviteId: result.invite.id, ...("emailError" in delivery ? { emailError: delivery.emailError } : {}) };
+    }
+
+    return { user: result.user, temporaryPassword };
   },
 
   async list(organizationId: string, input: { page: number; pageSize: number; search?: string; status?: "ACTIVE" | "INACTIVE" | "LOCKED"; officeId?: string }) {

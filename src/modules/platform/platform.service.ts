@@ -5,6 +5,7 @@ import { auditJson, type AuditContext } from "../../shared/audit.js";
 import { generateTemporaryPassword } from "../../shared/password.js";
 import { pageMeta, pagination } from "../../shared/pagination.js";
 import { ROLE } from "../../shared/tenancy.js";
+import { createInviteInTx, deliverInvite } from "../invites/invite.service.js";
 
 const DEFAULT_LEAVE_TYPES = ["Annual Leave", "Sick Leave", "Emergency Leave", "Unpaid Leave", "Other Leave"];
 
@@ -20,30 +21,44 @@ export const platformService = {
     return { organizations, activeOrganizations, orgAdmins, employees, offices };
   },
 
-  async createOrganization(input: { name: string; slug: string; isActive?: boolean }, audit: AuditContext) {
+  async createOrganization(
+    input: { name: string; slug: string; isActive?: boolean; adminEmail?: string; sendInvite?: boolean },
+    audit: AuditContext
+  ) {
     const slug = input.slug.toLowerCase();
-    return prisma.$transaction(async (tx) => {
+    const organization = await prisma.$transaction(async (tx) => {
       const existing = await tx.organization.findUnique({ where: { slug } });
       if (existing) throw new AppError(409, "ORG_SLUG_EXISTS", "Organization slug already exists");
-      const organization = await tx.organization.create({
+      const created = await tx.organization.create({
         data: { name: input.name, slug, isActive: input.isActive ?? true }
       });
       for (const name of DEFAULT_LEAVE_TYPES) {
-        await tx.leaveType.create({ data: { organizationId: organization.id, name, isActive: true } });
+        await tx.leaveType.create({ data: { organizationId: created.id, name, isActive: true } });
       }
       await tx.auditLog.create({
         data: {
           actorUserId: audit.actorUserId,
           action: "ORGANIZATION_CREATED",
           entityType: "Organization",
-          entityId: organization.id,
-          newValues: auditJson(organization),
+          entityId: created.id,
+          newValues: auditJson(created),
           ipAddress: audit.ipAddress,
           userAgent: audit.userAgent
         }
       });
-      return organization;
+      return created;
     });
+
+    if (!input.adminEmail) return organization;
+    const admin = await this.createOrgAdmin(
+      {
+        organizationId: organization.id,
+        email: input.adminEmail,
+        deliveryMethod: input.sendInvite ? "SEND_EMAIL" : "SHOW_PASSWORD"
+      },
+      audit
+    );
+    return { ...organization, admin };
   },
 
   async listOrganizations(input: { page: number; pageSize: number; search?: string; isActive?: boolean }) {
@@ -133,9 +148,13 @@ export const platformService = {
     });
   },
 
-  async createOrgAdmin(input: { organizationId: string; email: string; temporaryPassword?: string }, audit: AuditContext) {
+  async createOrgAdmin(
+    input: { organizationId: string; email: string; temporaryPassword?: string; deliveryMethod?: "SHOW_PASSWORD" | "SEND_EMAIL" },
+    audit: AuditContext
+  ) {
     const organization = await this.getOrganization(input.organizationId);
     if (!organization.isActive) throw new AppError(400, "ORG_INACTIVE", "Cannot add admins to an inactive organization");
+    const deliveryMethod = input.deliveryMethod ?? "SHOW_PASSWORD";
     const temporaryPassword = input.temporaryPassword ?? generateTemporaryPassword();
     const passwordHash = await argon2.hash(temporaryPassword, { type: argon2.argon2id });
 
@@ -168,10 +187,25 @@ export const platformService = {
           userAgent: audit.userAgent
         }
       });
-      return user;
+
+      if (deliveryMethod !== "SEND_EMAIL") return { user, invite: null as Awaited<ReturnType<typeof createInviteInTx>>["invite"] | null, token: null as string | null };
+
+      const issued = await createInviteInTx(tx, {
+        type: "ORG_ADMIN",
+        email: input.email,
+        organizationId: organization.id,
+        invitedByUserId: audit.actorUserId,
+        userId: user.id
+      });
+      return { user, invite: issued.invite, token: issued.token };
     });
 
-    return { user: result, temporaryPassword };
+    if (deliveryMethod === "SEND_EMAIL" && result.invite && result.token) {
+      const delivery = await deliverInvite(result.invite, result.token);
+      return { user: result.user, emailSent: delivery.emailSent, inviteId: result.invite.id, ...("emailError" in delivery ? { emailError: delivery.emailError } : {}) };
+    }
+
+    return { user: result.user, temporaryPassword };
   },
 
   async listOrgAdmins(input: { page: number; pageSize: number; organizationId?: string; search?: string; status?: "ACTIVE" | "INACTIVE" | "LOCKED" }) {

@@ -3,7 +3,7 @@ import { prisma } from "../../database/prisma.js";
 import { AppError } from "../../shared/errors/app-error.js";
 import { auditJson, type AuditContext } from "../../shared/audit.js";
 import { generateEmployeeCode } from "../../shared/employee-code.js";
-import { generateTemporaryPassword } from "../../shared/password.js";
+import { generateMemorableTemporaryPassword } from "../../shared/password.js";
 import { pageMeta, pagination } from "../../shared/pagination.js";
 import { assertSameOrganization } from "../../shared/tenancy.js";
 import { assertOfficeInScope, employeeOfficeFilter, type OfficeScope } from "../../shared/office-scope.js";
@@ -27,6 +27,7 @@ type CreateEmployeeInput = {
   officeId?: string | null;
   scheduleId?: string | null;
   temporaryPassword?: string;
+  mustChangePassword?: boolean;
 };
 
 type ListInput = {
@@ -56,20 +57,20 @@ export const employeeService = {
   async create(organizationId: string, input: CreateEmployeeInput, audit: AuditContext, scope: OfficeScope) {
     assertOfficeInScope(scope, input.officeId ?? undefined, "You can only assign employees to offices you manage");
     await validateAssignments(organizationId, input.officeId, input.scheduleId);
-    const temporaryPassword = input.temporaryPassword ?? generateTemporaryPassword();
-    const passwordHash = await argon2.hash(temporaryPassword, { type: argon2.argon2id });
 
-    const employee = await prisma.$transaction(async (tx) => {
+    const created = await prisma.$transaction(async (tx) => {
       const employeeRole = await tx.role.findUnique({ where: { name: "EMPLOYEE" } });
       if (!employeeRole) throw new AppError(500, "ROLE_NOT_CONFIGURED", "EMPLOYEE role is not configured");
 
       const employeeCode = input.employeeCode ?? (await generateEmployeeCode(tx, organizationId));
+      const temporaryPassword = input.temporaryPassword ?? generateMemorableTemporaryPassword(employeeCode);
+      const passwordHash = await argon2.hash(temporaryPassword, { type: argon2.argon2id });
 
       const user = await tx.user.create({
         data: {
           email: input.email,
           passwordHash,
-          mustChangePassword: true,
+          mustChangePassword: input.mustChangePassword ?? true,
           userRoles: { create: { roleId: employeeRole.id } },
           memberships: { create: { organizationId } },
           employee: {
@@ -109,10 +110,10 @@ export const employeeService = {
           userAgent: audit.userAgent
         }
       });
-      return user.employee!;
+      return { employee: user.employee!, temporaryPassword };
     });
 
-    return { employee, temporaryPassword };
+    return created;
   },
 
   async list(organizationId: string, input: ListInput, scope: OfficeScope) {
@@ -228,7 +229,7 @@ export const employeeService = {
 
   async resetPassword(organizationId: string, employeeId: string, input: { temporaryPassword?: string; reason: string }, audit: AuditContext, scope: OfficeScope) {
     const employee = await this.get(organizationId, employeeId, scope);
-    const temporaryPassword = input.temporaryPassword ?? generateTemporaryPassword();
+    const temporaryPassword = input.temporaryPassword ?? generateMemorableTemporaryPassword(employee.employeeCode);
     const passwordHash = await argon2.hash(temporaryPassword, { type: argon2.argon2id });
     await prisma.$transaction(async (tx) => {
       await tx.user.update({ where: { id: employee.userId }, data: { passwordHash, mustChangePassword: true, status: "ACTIVE" } });
