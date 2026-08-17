@@ -68,6 +68,10 @@ enum NotificationType {
   LEAVE_REJECTED
   ATTENDANCE_CORRECTED
   WORKSHEET_REVIEWED
+  EVALUATION_OPENED
+  EVALUATION_SELF_SUBMITTED
+  EVALUATION_SCORED
+  EVALUATION_FINALIZED
 }
 
 enum DevicePlatform {
@@ -89,6 +93,28 @@ enum InviteStatus {
   CANCELLED
 }
 
+enum EvaluationCycleStatus {
+  DRAFT
+  OPEN
+  CLOSED
+}
+
+enum EvaluationStatus {
+  OPEN
+  SELF_DRAFT
+  SELF_SUBMITTED
+  EVALUATOR_DRAFT
+  EVALUATOR_SUBMITTED
+  FINALIZED
+}
+
+enum EvaluationItemSection {
+  METRIC
+  RESPONSIBILITY
+  SKILL_IMPROVED
+  GOAL
+}
+
 model Organization {
   id          String                     @id @default(uuid()) @db.Uuid
   name        String
@@ -100,8 +126,11 @@ model Organization {
   offices     Office[]
   schedules   WorkSchedule[]
   leaveTypes  LeaveType[]
-  employees   Employee[]
-  invites     Invite[]
+  employees             Employee[]
+  invites               Invite[]
+  evaluationTemplates   EvaluationTemplate[]
+  evaluationCycles      EvaluationCycle[]
+  evaluations           Evaluation[]
   @@map("organizations")
 }
 
@@ -147,7 +176,10 @@ model User {
   memberships        OrganizationMembership[]
   adminOffices       AdminOffice[]
   invites            Invite[]                   @relation("InviteUser")
-  sentInvites        Invite[]                   @relation("InviteInviter")
+  sentInvites             Invite[]                   @relation("InviteInviter")
+  createdCycles           EvaluationCycle[]          @relation("CycleCreator")
+  evaluatorEvaluations    Evaluation[]               @relation("EvaluationEvaluator")
+  finalizedEvaluations    Evaluation[]               @relation("EvaluationFinalizer")
   @@map("users")
 }
 
@@ -267,6 +299,7 @@ model Employee {
   jobTitle            String?        @map("job_title")
   department          String?
   employmentStartDate DateTime       @map("employment_start_date") @db.Date
+  supervisorId        String?        @map("supervisor_id") @db.Uuid
   status              EmployeeStatus @default(ACTIVE)
   createdAt           DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt           DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -274,15 +307,19 @@ model Employee {
   user                User           @relation(fields: [userId], references: [id], onDelete: Restrict)
   office              Office?        @relation(fields: [officeId], references: [id], onDelete: SetNull)
   schedule            WorkSchedule?  @relation(fields: [scheduleId], references: [id], onDelete: SetNull)
+  supervisor          Employee?      @relation("EmployeeSupervisor", fields: [supervisorId], references: [id], onDelete: SetNull)
+  directReports       Employee[]     @relation("EmployeeSupervisor")
   timesheets          Timesheet[]
   worksheets          Worksheet[]
   lateReasons         LateReason[]
   leaveRequests       LeaveRequest[]
+  evaluations         Evaluation[]
   @@unique([organizationId, employeeCode])
   @@index([organizationId, status])
   @@index([officeId])
   @@index([scheduleId])
   @@index([status, officeId])
+  @@index([supervisorId])
   @@map("employees")
 }
 
@@ -539,4 +576,131 @@ model UserDevice {
   @@unique([userId, deviceId])
   @@index([userId, isActive])
   @@map("user_devices")
+}
+
+model EvaluationTemplate {
+  id             String                    @id @default(uuid()) @db.Uuid
+  organizationId String                    @map("organization_id") @db.Uuid
+  name           String
+  description    String?
+  jobTitleHint   String?                   @map("job_title_hint")
+  isDefault      Boolean                   @default(false) @map("is_default")
+  isActive       Boolean                   @default(true) @map("is_active")
+  createdAt      DateTime                  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime                  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization   Organization              @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  items          EvaluationTemplateItem[]
+  evaluations    Evaluation[]
+  @@index([organizationId, isActive])
+  @@map("evaluation_templates")
+}
+
+model EvaluationTemplateItem {
+  id         String                 @id @default(uuid()) @db.Uuid
+  templateId String                 @map("template_id") @db.Uuid
+  section    EvaluationItemSection
+  itemKey    String                 @map("item_key")
+  label      String
+  sortOrder  Int                    @map("sort_order")
+  createdAt  DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  template   EvaluationTemplate     @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  @@unique([templateId, itemKey])
+  @@index([templateId, sortOrder])
+  @@map("evaluation_template_items")
+}
+
+model EvaluationCycle {
+  id               String                 @id @default(uuid()) @db.Uuid
+  organizationId   String                 @map("organization_id") @db.Uuid
+  name             String
+  numberPrefix     String?                @map("number_prefix")
+  periodStart      DateTime               @map("period_start") @db.Date
+  periodEnd        DateTime               @map("period_end") @db.Date
+  selfDueAt        DateTime?              @map("self_due_at") @db.Timestamptz(6)
+  evaluatorDueAt   DateTime?              @map("evaluator_due_at") @db.Timestamptz(6)
+  status           EvaluationCycleStatus  @default(DRAFT)
+  openedAt         DateTime?              @map("opened_at") @db.Timestamptz(6)
+  closedAt         DateTime?              @map("closed_at") @db.Timestamptz(6)
+  createdByUserId  String                 @map("created_by_user_id") @db.Uuid
+  createdAt        DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization     Organization           @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  createdBy        User                   @relation("CycleCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  evaluations      Evaluation[]
+  @@index([organizationId, status])
+  @@index([organizationId, periodStart, periodEnd])
+  @@map("evaluation_cycles")
+}
+
+model Evaluation {
+  id                    String             @id @default(uuid()) @db.Uuid
+  organizationId        String             @map("organization_id") @db.Uuid
+  cycleId               String             @map("cycle_id") @db.Uuid
+  employeeId            String             @map("employee_id") @db.Uuid
+  templateId            String?            @map("template_id") @db.Uuid
+  number                String
+  status                EvaluationStatus   @default(OPEN)
+  templateSnapshot      Json               @map("template_snapshot")
+  periodSnapshot        Json               @map("period_snapshot")
+  focusCompetency       String?            @map("focus_competency")
+  actionPlan            String?            @map("action_plan")
+  overallSelf           Decimal?           @map("overall_self") @db.Decimal(4, 2)
+  overallEvaluator      Decimal?           @map("overall_evaluator") @db.Decimal(4, 2)
+  selfSubmittedAt       DateTime?          @map("self_submitted_at") @db.Timestamptz(6)
+  evaluatorUserId       String?            @map("evaluator_user_id") @db.Uuid
+  evaluatorSubmittedAt  DateTime?          @map("evaluator_submitted_at") @db.Timestamptz(6)
+  finalizedAt           DateTime?          @map("finalized_at") @db.Timestamptz(6)
+  finalizedByUserId     String?            @map("finalized_by_user_id") @db.Uuid
+  createdAt             DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization          Organization       @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  cycle                 EvaluationCycle    @relation(fields: [cycleId], references: [id], onDelete: Restrict)
+  employee              Employee           @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  template              EvaluationTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  evaluator             User?              @relation("EvaluationEvaluator", fields: [evaluatorUserId], references: [id], onDelete: SetNull)
+  finalizedBy           User?              @relation("EvaluationFinalizer", fields: [finalizedByUserId], references: [id], onDelete: SetNull)
+  scores                EvaluationScore[]
+  goals                 EvaluationGoal[]
+  @@unique([cycleId, employeeId])
+  @@unique([organizationId, number])
+  @@index([organizationId, status])
+  @@index([employeeId, status])
+  @@index([cycleId, status])
+  @@map("evaluations")
+}
+
+model EvaluationScore {
+  id                String                 @id @default(uuid()) @db.Uuid
+  evaluationId      String                 @map("evaluation_id") @db.Uuid
+  itemKey           String                 @map("item_key")
+  section           EvaluationItemSection
+  label             String
+  sortOrder         Int                    @map("sort_order")
+  selfScore         Int?                   @map("self_score")
+  evaluatorScore    Int?                   @map("evaluator_score")
+  evaluatorComment  String?                @map("evaluator_comment")
+  createdAt         DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
+  evaluation        Evaluation             @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
+  @@unique([evaluationId, itemKey])
+  @@index([evaluationId, sortOrder])
+  @@map("evaluation_scores")
+}
+
+model EvaluationGoal {
+  id                         String      @id @default(uuid()) @db.Uuid
+  evaluationId               String      @map("evaluation_id") @db.Uuid
+  skill                      String
+  sortOrder                  Int         @map("sort_order")
+  previousSelfScore          Int?        @map("previous_self_score")
+  previousEvaluatorScore     Int?        @map("previous_evaluator_score")
+  improvementSelfScore       Int?        @map("improvement_self_score")
+  improvementEvaluatorScore  Int?        @map("improvement_evaluator_score")
+  targetDate                 DateTime?   @map("target_date") @db.Date
+  criteria                   String?
+  createdAt                  DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                  DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+  evaluation                 Evaluation  @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
+  @@index([evaluationId, sortOrder])
+  @@map("evaluation_goals")
 }

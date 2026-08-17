@@ -2,6 +2,14 @@ import { z } from "zod";
 
 const emptyToUndefined = z.preprocess((value) => (typeof value === "string" && value.trim() === "" ? undefined : value), z.string().optional());
 
+function normalizeAdminPortalUrl(value: string) {
+  const trimmed = value.trim().replace(/\/+$/, "");
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  const host = trimmed.replace(/^\/+/, "");
+  const isLocal = /^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(host);
+  return `${isLocal ? "http" : "https"}://${host}`;
+}
+
 const schema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().int().positive().default(4000),
@@ -27,7 +35,11 @@ const schema = z.object({
   SMTP_USER: emptyToUndefined,
   SMTP_PASS: emptyToUndefined,
   SMTP_FROM: z.string().default("Workforce <noreply@localhost>"),
-  ADMIN_PORTAL_URL: z.string().default("http://localhost:3000"),
+  RESEND_API_KEY: emptyToUndefined,
+  ADMIN_PORTAL_URL: z.preprocess(
+    (value) => (typeof value === "string" && value.trim() ? normalizeAdminPortalUrl(value) : value),
+    z.string().url().default("http://localhost:3000")
+  ),
   INVITE_TTL_HOURS: z.coerce.number().int().positive().default(72)
 });
 

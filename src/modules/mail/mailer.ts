@@ -75,6 +75,12 @@ export async function logMailStartup() {
     return;
   }
   logger.info(summary, "SMTP env vars present — verifying connection");
+  if (/localhost|127\.0\.0\.1/i.test(env.ADMIN_PORTAL_URL)) {
+    logger.warn(
+      { adminPortalUrl: env.ADMIN_PORTAL_URL },
+      "ADMIN_PORTAL_URL points at localhost — invite buttons will not work for people outside this machine. Set a public https URL before sending real invites."
+    );
+  }
   try {
     await getTransporter().verify();
     logger.info({ host: summary.host, port: summary.port }, "SMTP connection verified");
@@ -83,13 +89,14 @@ export async function logMailStartup() {
   }
 }
 
-export async function sendMail(to: string, subject: string, html: string) {
+export async function sendMail(to: string, subject: string, html: string, text?: string) {
   logger.info({ to, subject, from: env.SMTP_FROM, host: env.SMTP_HOST, port: env.SMTP_PORT }, "Sending email");
   try {
     const info = await getTransporter().sendMail({
       from: env.SMTP_FROM,
       to,
       subject,
+      text: text?.trim() || html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(),
       html
     });
     logger.info(

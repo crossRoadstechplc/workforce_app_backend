@@ -21,6 +21,7 @@ import {
   adminLeaveRosterRouter
 } from "./modules/history/history.routes.js";
 import { leaveRouter, adminLeaveRouter } from "./modules/leave/leave.routes.js";
+import { evaluationRouter, adminEvaluationRouter } from "./modules/performance/performance.routes.js";
 import { notificationRouter } from "./modules/notifications/notification.routes.js";
 import { adminDashboardRouter, adminReportRouter } from "./modules/reports/report.routes.js";
 import { platformRouter } from "./modules/platform/platform.routes.js";
@@ -58,12 +59,14 @@ app.use("/api/v1/attendance", attendanceRouter);
 app.use("/api/v1/timesheets", timesheetHistoryRouter);
 app.use("/api/v1/worksheets", worksheetHistoryRouter);
 app.use("/api/v1/leave-requests", leaveRouter);
+app.use("/api/v1/evaluations", evaluationRouter);
 app.use("/api/v1/notifications", notificationRouter);
 app.use("/api/v1/admin/timesheets", adminTimesheetRouter);
 app.use("/api/v1/admin/attendance", adminAttendanceRosterRouter);
 app.use("/api/v1/admin/worksheets", adminWorksheetRouter);
 app.use("/api/v1/admin/leave", adminLeaveRosterRouter);
 app.use("/api/v1/admin/leave-requests", adminLeaveRouter);
+app.use("/api/v1/admin/evaluations", adminEvaluationRouter);
 app.use("/api/v1/admin/dashboard", adminDashboardRouter);
 app.use("/api/v1/admin/reports", adminReportRouter);
 app.use((_req, res) => res.status(404).json({ error: { code: "NOT_FOUND", message: "Route not found" } }));

@@ -20,6 +20,7 @@ export const createEmployeeSchema = z.object({
   employmentStartDate: z.coerce.date(),
   officeId: z.string().uuid().optional().nullable(),
   scheduleId: z.string().uuid().optional().nullable(),
+  supervisorId: z.string().uuid().optional().nullable(),
   temporaryPassword: z.string().min(10).max(128).optional()
 });
 
@@ -34,7 +35,8 @@ export const updateEmployeeSchema = z.object({
   department: optionalText,
   employmentStartDate: z.coerce.date().optional(),
   officeId: z.string().uuid().optional().nullable(),
-  scheduleId: z.string().uuid().optional().nullable()
+  scheduleId: z.string().uuid().optional().nullable(),
+  supervisorId: z.string().uuid().optional().nullable()
 }).refine((value) => Object.keys(value).length > 0, "At least one field is required");
 
 export const employeeStatusSchema = z.object({

@@ -29,7 +29,7 @@ function inviteExpiresAt() {
 
 function inviteUrl(type: InviteType, token: string) {
   const path = type === "EMPLOYEE" ? "/invite/employee" : "/invite/admin";
-  return `${env.ADMIN_PORTAL_URL.replace(/\/$/, "")}${path}?token=${encodeURIComponent(token)}`;
+  return `${env.ADMIN_PORTAL_URL}${path}?token=${encodeURIComponent(token)}`;
 }
 
 const inviteInclude = {
@@ -110,17 +110,17 @@ export async function deliverInvite(invite: Invite & { organization: { name: str
   try {
     if (invite.type === "ORG_ADMIN") {
       const mail = orgAdminInviteEmail({ companyName: invite.organization.name, href });
-      await sendMail(invite.email, mail.subject, mail.html);
+      await sendMail(invite.email, mail.subject, mail.html, mail.text);
     } else if (invite.type === "OFFICE_ADMIN") {
       const mail = officeAdminInviteEmail({
         companyName: invite.organization.name,
         officeNames: (await officeNamesFor(invite.officeIds)) || "assigned offices",
         href
       });
-      await sendMail(invite.email, mail.subject, mail.html);
+      await sendMail(invite.email, mail.subject, mail.html, mail.text);
     } else {
       const mail = employeeInviteEmail({ companyName: invite.organization.name, href });
-      await sendMail(invite.email, mail.subject, mail.html);
+      await sendMail(invite.email, mail.subject, mail.html, mail.text);
     }
     logger.info({ inviteId: invite.id, to: invite.email, type: invite.type }, "Invite email delivered");
     return { emailSent: true as const };

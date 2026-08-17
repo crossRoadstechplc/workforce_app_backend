@@ -7,6 +7,7 @@ import { seedOfficesAndSchedules } from "./builders/office.js";
 import { seedOrgAdmin, seedEmployees } from "./builders/employee.js";
 import { seedAttendanceScenarios } from "./builders/attendance.js";
 import { seedLeaveScenarios } from "./builders/leave.js";
+import { seedEvaluationTemplate } from "./builders/evaluation.js";
 
 export async function seedDemo(fixture: DemoFixture, bootstrap: BootstrapResult) {
   const demoPassword = process.env.SEED_DEMO_PASSWORD ?? "Demo123!";
@@ -40,6 +41,7 @@ export async function seedDemo(fixture: DemoFixture, bootstrap: BootstrapResult)
     await seedAttendanceScenarios(prisma, orgFixture.slug, orgFixture, employees, offices, schedules, orgAdmin.id);
     const leaveTypeMap = await getLeaveTypeMap(prisma, organization.id);
     await seedLeaveScenarios(prisma, organization.id, orgFixture, employees, leaveTypeMap, orgAdmin.id);
+    await seedEvaluationTemplate(prisma, organization.id);
     console.log(`  ✓ ${orgFixture.name} (${orgFixture.slug})`);
   }
 }

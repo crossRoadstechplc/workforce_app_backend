@@ -7,12 +7,28 @@ import { generateMemorableTemporaryPassword } from "../../shared/password.js";
 import { pageMeta, pagination } from "../../shared/pagination.js";
 import { assertSameOrganization } from "../../shared/tenancy.js";
 import { assertOfficeInScope, employeeOfficeFilter, type OfficeScope } from "../../shared/office-scope.js";
+import { supervisorPortalAccess, validateSupervisor } from "../performance/performance.service.js";
+
+const supervisorSelect = {
+  id: true,
+  firstName: true,
+  middleName: true,
+  lastName: true,
+  jobTitle: true,
+  userId: true,
+  user: { select: { id: true, email: true, status: true, userRoles: { include: { role: true } } } }
+} as const;
 
 const employeeInclude = {
   user: { select: { id: true, email: true, status: true, mustChangePassword: true, lastLoginAt: true } },
   office: true,
-  schedule: { include: { days: { orderBy: { weekday: "asc" as const } } } }
+  schedule: { include: { days: { orderBy: { weekday: "asc" as const } } } },
+  supervisor: { select: supervisorSelect }
 } as const;
+
+function withSupervisorAccess<T extends { supervisor?: { user: { userRoles: Array<{ role: { name: string } }> } } | null }>(employee: T) {
+  return { ...employee, supervisorHasPortalAccess: supervisorPortalAccess(employee.supervisor) };
+}
 
 type CreateEmployeeInput = {
   email: string;
@@ -26,6 +42,7 @@ type CreateEmployeeInput = {
   employmentStartDate: Date;
   officeId?: string | null;
   scheduleId?: string | null;
+  supervisorId?: string | null;
   temporaryPassword?: string;
   mustChangePassword?: boolean;
 };
@@ -57,6 +74,7 @@ export const employeeService = {
   async create(organizationId: string, input: CreateEmployeeInput, audit: AuditContext, scope: OfficeScope) {
     assertOfficeInScope(scope, input.officeId ?? undefined, "You can only assign employees to offices you manage");
     await validateAssignments(organizationId, input.officeId, input.scheduleId);
+    await validateSupervisor(organizationId, null, input.supervisorId);
 
     const created = await prisma.$transaction(async (tx) => {
       const employeeRole = await tx.role.findUnique({ where: { name: "EMPLOYEE" } });
@@ -85,7 +103,8 @@ export const employeeService = {
               department: input.department,
               employmentStartDate: input.employmentStartDate,
               officeId: input.officeId,
-              scheduleId: input.scheduleId
+              scheduleId: input.scheduleId,
+              supervisorId: input.supervisorId
             }
           }
         },
@@ -110,7 +129,7 @@ export const employeeService = {
           userAgent: audit.userAgent
         }
       });
-      return { employee: user.employee!, temporaryPassword };
+      return { employee: withSupervisorAccess(user.employee!), temporaryPassword };
     });
 
     return created;
@@ -139,7 +158,7 @@ export const employeeService = {
       prisma.employee.findMany({ where, include: employeeInclude, orderBy: [{ createdAt: "desc" }], ...pagination(input) }),
       prisma.employee.count({ where })
     ]);
-    return { items, meta: pageMeta(input.page, input.pageSize, total) };
+    return { items: items.map(withSupervisorAccess), meta: pageMeta(input.page, input.pageSize, total) };
   },
 
   async get(organizationId: string, employeeId: string, scope: OfficeScope) {
@@ -147,7 +166,7 @@ export const employeeService = {
     if (!employee) throw new AppError(404, "EMPLOYEE_NOT_FOUND", "Employee not found");
     assertSameOrganization(employee.organizationId, organizationId, "EMPLOYEE_NOT_FOUND", "Employee not found");
     assertOfficeInScope(scope, employee.officeId, "You do not manage this employee's office");
-    return employee;
+    return withSupervisorAccess(employee);
   },
 
   async update(
@@ -165,6 +184,7 @@ export const employeeService = {
       employmentStartDate?: Date;
       officeId?: string | null;
       scheduleId?: string | null;
+      supervisorId?: string | null;
     },
     audit: AuditContext,
     scope: OfficeScope
@@ -172,6 +192,7 @@ export const employeeService = {
     const current = await this.get(organizationId, employeeId, scope);
     if (input.officeId !== undefined) assertOfficeInScope(scope, input.officeId, "You can only assign employees to offices you manage");
     await validateAssignments(organizationId, input.officeId, input.scheduleId);
+    if (input.supervisorId !== undefined) await validateSupervisor(organizationId, employeeId, input.supervisorId);
 
     return prisma.$transaction(async (tx) => {
       if (input.email && input.email !== current.user.email) {
@@ -191,7 +212,7 @@ export const employeeService = {
           userAgent: audit.userAgent
         }
       });
-      return updated;
+      return withSupervisorAccess(updated);
     });
   },
 
@@ -223,7 +244,7 @@ export const employeeService = {
           userAgent: audit.userAgent
         }
       });
-      return employee;
+      return withSupervisorAccess(employee);
     });
   },
 
