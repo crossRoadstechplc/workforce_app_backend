@@ -31,6 +31,8 @@ import { adminInviteRouter, publicInviteRouter } from "./modules/invites/invite.
 
 export const app = express();
 app.disable("x-powered-by");
+// nginx / load balancer sets X-Forwarded-For. Required by express-rate-limit in production.
+app.set("trust proxy", 1);
 app.use(requestId);
 app.use(pinoHttp({ logger }));
 app.use(cors({ origin: true, credentials: true }));
