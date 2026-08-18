@@ -11,6 +11,7 @@ export const orgAdminPermissions = [
   "evaluation.view_own", "evaluation.submit_own",
   "evaluation.view_office", "evaluation.review",
   "evaluation.cycle.manage", "evaluation.template.manage", "evaluation.finalize",
+  "meeting.book", "meeting.view_own", "meeting.room.manage", "meeting.manage",
   "notification.view", "report.view", "report.export", "audit.view"
 ];
 
@@ -20,6 +21,7 @@ export const officeAdminPermissions = [
   "worksheet.view_all", "worksheet.review",
   "leave.view_all", "leave.approve", "leave.reject",
   "evaluation.view_office", "evaluation.review",
+  "meeting.book", "meeting.view_own",
   "notification.view", "report.view", "report.export", "audit.view"
 ];
 
@@ -32,6 +34,7 @@ export const employeePermissions = [
   "worksheet.create", "worksheet.view_own",
   "leave.request", "leave.view_own",
   "evaluation.view_own", "evaluation.submit_own",
+  "meeting.book", "meeting.view_own",
   "notification.view"
 ];
 

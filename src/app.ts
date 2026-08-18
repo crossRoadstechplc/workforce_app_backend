@@ -3,7 +3,6 @@ import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { pinoHttp } from "pino-http";
-import { buildCorsOptions } from "./config/cors.js";
 import { logger } from "./config/logger.js";
 import { requestId } from "./middleware/request-id.js";
 import { errorHandler } from "./middleware/error-handler.js";
@@ -22,6 +21,7 @@ import {
 } from "./modules/history/history.routes.js";
 import { leaveRouter, adminLeaveRouter } from "./modules/leave/leave.routes.js";
 import { evaluationRouter, adminEvaluationRouter } from "./modules/performance/performance.routes.js";
+import { meetingRouter, adminMeetingRouter } from "./modules/meetings/meeting.routes.js";
 import { notificationRouter } from "./modules/notifications/notification.routes.js";
 import { adminDashboardRouter, adminReportRouter } from "./modules/reports/report.routes.js";
 import { platformRouter } from "./modules/platform/platform.routes.js";
@@ -33,10 +33,8 @@ export const app = express();
 app.disable("x-powered-by");
 app.use(requestId);
 app.use(pinoHttp({ logger }));
-app.use(helmet({
-  crossOriginResourcePolicy: { policy: "cross-origin" }
-}));
-app.use(cors(buildCorsOptions()));
+app.use(cors({ origin: true, credentials: true }));
+app.use(helmet({ crossOriginResourcePolicy: false }));
 app.use(express.json({ limit: "1mb" }));
 app.use(rateLimit({
   windowMs: 60_000,
@@ -60,6 +58,7 @@ app.use("/api/v1/timesheets", timesheetHistoryRouter);
 app.use("/api/v1/worksheets", worksheetHistoryRouter);
 app.use("/api/v1/leave-requests", leaveRouter);
 app.use("/api/v1/evaluations", evaluationRouter);
+app.use("/api/v1/meetings", meetingRouter);
 app.use("/api/v1/notifications", notificationRouter);
 app.use("/api/v1/admin/timesheets", adminTimesheetRouter);
 app.use("/api/v1/admin/attendance", adminAttendanceRosterRouter);
@@ -67,6 +66,7 @@ app.use("/api/v1/admin/worksheets", adminWorksheetRouter);
 app.use("/api/v1/admin/leave", adminLeaveRosterRouter);
 app.use("/api/v1/admin/leave-requests", adminLeaveRouter);
 app.use("/api/v1/admin/evaluations", adminEvaluationRouter);
+app.use("/api/v1/admin/meetings", adminMeetingRouter);
 app.use("/api/v1/admin/dashboard", adminDashboardRouter);
 app.use("/api/v1/admin/reports", adminReportRouter);
 app.use((_req, res) => res.status(404).json({ error: { code: "NOT_FOUND", message: "Route not found" } }));

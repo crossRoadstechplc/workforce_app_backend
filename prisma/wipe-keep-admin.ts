@@ -46,6 +46,8 @@ async function main() {
       "leave_requests",
       "leave_types",
       "invites",
+      "meeting_bookings",
+      "meeting_rooms",
       "notifications",
       "user_devices",
       "refresh_tokens",

@@ -1,6 +1,5 @@
 import type { Server as HttpServer } from "node:http";
 import { Server } from "socket.io";
-import { env } from "../config/env.js";
 import { logger } from "../config/logger.js";
 import { verifyAccessToken } from "../modules/auth/token.service.js";
 import { ROLE } from "../shared/tenancy.js";
@@ -9,7 +8,7 @@ let io: Server | undefined;
 
 export function initializeSocket(server: HttpServer) {
   io = new Server(server, {
-    cors: { origin: env.CORS_ORIGINS === "*" ? true : env.CORS_ORIGINS.split(","), credentials: true },
+    cors: { origin: true, credentials: true },
     transports: ["websocket", "polling"]
   });
 

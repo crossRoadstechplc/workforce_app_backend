@@ -1,0 +1,13 @@
+{
+	"folders": [
+		{
+			"path": "../workforce_admin_portal"
+		},
+		{
+			"path": "."
+		},
+		{
+			"path": "../workforce-employee-app"
+		}
+	]
+}
