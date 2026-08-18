@@ -53,7 +53,7 @@ async function orgAdminUserIds(organizationId: string) {
   return users.map((x) => x.id);
 }
 
-async function bookingActor(auth: AuthContext) {
+async function bookingActor(auth: AuthContext, opts?: { requireOffice?: boolean }) {
   if (!auth.organizationId) throw new AppError(403, "ORG_CONTEXT_REQUIRED", "Organization context is required");
   const employee = await prisma.employee.findUnique({
     where: { userId: auth.userId },
@@ -66,7 +66,7 @@ async function bookingActor(auth: AuthContext) {
       : employee?.officeId
         ? [employee.officeId]
         : [];
-  if (allowedOfficeIds && !allowedOfficeIds.length) {
+  if (opts?.requireOffice !== false && allowedOfficeIds && !allowedOfficeIds.length) {
     throw new AppError(403, "NO_OFFICE_ASSIGNMENT", "You can only book rooms for your office");
   }
   return {
@@ -123,7 +123,10 @@ async function loadRoom(organizationId: string, roomId: string) {
 
 export const meetingService = {
   async listRoomsForBooker(auth: AuthContext, input: { page: number; pageSize: number; officeId?: string; isActive?: boolean }) {
-    const actor = await bookingActor(auth);
+    const actor = await bookingActor(auth, { requireOffice: false });
+    if (actor.allowedOfficeIds && !actor.allowedOfficeIds.length) {
+      return { items: [], meta: pageMeta(input.page, input.pageSize, 0) };
+    }
     const officeFilter = input.officeId
       ? (assertCanBookOffice(actor.allowedOfficeIds, input.officeId), { officeId: input.officeId })
       : actor.allowedOfficeIds
@@ -174,7 +177,7 @@ export const meetingService = {
   },
 
   async myBookings(auth: AuthContext, input: { page: number; pageSize: number; status?: MeetingBookingStatus; from?: Date; to?: Date }) {
-    const actor = await bookingActor(auth);
+    const actor = await bookingActor(auth, { requireOffice: false });
     const where: Prisma.MeetingBookingWhereInput = {
       organizationId: actor.organizationId,
       bookedByUserId: actor.userId,
