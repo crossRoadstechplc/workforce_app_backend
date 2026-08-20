@@ -5,7 +5,7 @@ import { auditJson, type AuditContext } from "../../shared/audit.js";
 import { pageMeta, pagination } from "../../shared/pagination.js";
 import { isOfficeAdmin, isOrgAdmin, ROLE, type AuthContext } from "../../shared/tenancy.js";
 import { deliverNotification } from "../notifications/notification.service.js";
-import { emitToOrgRole, emitToUser } from "../../realtime/socket.server.js";
+import { emitToOfficeDisplay, emitToOfficeStaff, emitToOrgAdmins, emitToUser } from "../../realtime/socket.server.js";
 import type { MeetingBookingStatus, Prisma } from "../../generated/prisma/client.js";
 
 const roomInclude = {
@@ -39,6 +39,13 @@ function serializeBooking(row: {
     ...row,
     organizerName: personName(row.organizer) ?? row.bookedBy.email
   };
+}
+
+function emitMeetingChanged(organizationId: string, officeId: string, bookingId: string, bookedByUserId?: string) {
+  const payload = { bookingId };
+  emitToOrgAdmins(organizationId, "meeting.changed", payload);
+  emitToOfficeStaff(organizationId, officeId, "meeting.changed", payload);
+  if (bookedByUserId) emitToUser(bookedByUserId, "meeting.changed", payload);
 }
 
 async function orgAdminUserIds(organizationId: string) {
@@ -252,7 +259,9 @@ export const meetingService = {
     });
 
     for (const n of created.notifications) await deliverNotification(n);
-    emitToOrgRole(actor.organizationId, ROLE.ORG_ADMIN, "meeting.booked", { bookingId: created.booking.id });
+    emitToOrgAdmins(actor.organizationId, "meeting.booked", { bookingId: created.booking.id });
+    emitMeetingChanged(actor.organizationId, created.booking.officeId, created.booking.id, actor.userId);
+    emitToOfficeDisplay(actor.organizationId, created.booking.officeId, "display.rooms_changed", { bookingId: created.booking.id });
     return serializeBooking(created.booking);
   },
 
@@ -280,7 +289,9 @@ export const meetingService = {
         newValues: auditJson({ status: "CANCELLED" })
       }
     });
-    emitToOrgRole(actor.organizationId, ROLE.ORG_ADMIN, "meeting.cancelled", { bookingId: id });
+    emitToOrgAdmins(actor.organizationId, "meeting.cancelled", { bookingId: id });
+    emitMeetingChanged(actor.organizationId, current.officeId, id, actor.userId);
+    emitToOfficeDisplay(actor.organizationId, current.officeId, "display.rooms_changed", { bookingId: id });
     return serializeBooking(updated);
   },
 
@@ -497,6 +508,12 @@ export const meetingService = {
     });
     await deliverNotification(updated.n);
     emitToUser(current.bookedByUserId, "meeting.rescheduled", { bookingId: id });
+    emitMeetingChanged(organizationId, current.officeId, id, current.bookedByUserId);
+    emitToOfficeDisplay(organizationId, current.officeId, "display.rooms_changed", { bookingId: id });
+    if (updated.booking.officeId !== current.officeId) {
+      emitMeetingChanged(organizationId, updated.booking.officeId, id, current.bookedByUserId);
+      emitToOfficeDisplay(organizationId, updated.booking.officeId, "display.rooms_changed", { bookingId: id });
+    }
     return serializeBooking(updated.booking);
   },
 
@@ -539,6 +556,9 @@ export const meetingService = {
     });
     await deliverNotification(updated.n);
     emitToUser(current.bookedByUserId, "meeting.cancelled", { bookingId: id });
+    emitToOrgAdmins(organizationId, "meeting.cancelled", { bookingId: id });
+    emitMeetingChanged(organizationId, current.officeId, id, current.bookedByUserId);
+    emitToOfficeDisplay(organizationId, current.officeId, "display.rooms_changed", { bookingId: id });
     return serializeBooking(updated.booking);
   }
 };

@@ -21,6 +21,7 @@ const schema = z.object({
   JWT_REFRESH_SECRET: z.string().min(32),
   ACCESS_TOKEN_TTL_MINUTES: z.coerce.number().int().positive().default(15),
   REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().default(14),
+  DISPLAY_REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().default(90),
   MISSING_CHECKOUT_GRACE_MINUTES: z.coerce.number().int().min(0).default(120),
   FIREBASE_PROJECT_ID: emptyToUndefined,
   FIREBASE_CLIENT_EMAIL: emptyToUndefined,
@@ -40,7 +41,14 @@ const schema = z.object({
     (value) => (typeof value === "string" && value.trim() ? normalizeAdminPortalUrl(value) : value),
     z.string().url().default("http://localhost:3000")
   ),
-  INVITE_TTL_HOURS: z.coerce.number().int().positive().default(72)
+  INVITE_TTL_HOURS: z.coerce.number().int().positive().default(72),
+  VAULT_CREDENTIALS_PIN: z.preprocess((value) => (typeof value === "string" ? value.trim() : value), z.string().min(4).default("VaultCreds123")),
+  VAULT_SUBSCRIPTION_PIN: z.preprocess((value) => (typeof value === "string" ? value.trim() : value), z.string().min(4).default("VaultSubs123")),
+  VAULT_REVEAL_PIN: z.preprocess((value) => (typeof value === "string" ? value.trim() : value), z.string().min(4).default("VaultReveal123")),
+  VAULT_ENCRYPTION_KEY: z.string().regex(/^[0-9a-fA-F]{64}$/, "VAULT_ENCRYPTION_KEY must be 64 hex characters").default(
+    "a1b2c3d4e5f60718293a4b5c6d7e8f90112233445566778899aabbccddeeff00"
+  ),
+  VAULT_TOKEN_TTL_MINUTES: z.coerce.number().int().positive().default(15)
 });
 
 export const env = schema.parse(process.env);

@@ -3,8 +3,8 @@ import { prisma } from "../../database/prisma.js";
 import { AppError } from "../../shared/errors/app-error.js";
 import { auditJson, type AuditContext } from "../../shared/audit.js";
 import { deliverNotification } from "../notifications/notification.service.js";
-import { emitToOrgRole, emitToUser } from "../../realtime/socket.server.js";
-import { ROLE, assertSameOrganization } from "../../shared/tenancy.js";
+import { emitToOrgAdmins, emitToUser } from "../../realtime/socket.server.js";
+import { assertSameOrganization } from "../../shared/tenancy.js";
 import { assertOfficeInScope, employeeOfficeFilter, type OfficeScope } from "../../shared/office-scope.js";
 import { formatWorkDateKey, mapFormattedWorkDates, withFormattedWorkDate } from "../../shared/work-date.js";
 
@@ -204,7 +204,7 @@ export const historyService = {
       return { updated, n };
     });
     await deliverNotification(result.n);
-    emitToOrgRole(organizationId, ROLE.ORG_ADMIN, "attendance.corrected", { timesheetId: id, employeeId: current.employeeId });
+    emitToOrgAdmins(organizationId, "attendance.corrected", { timesheetId: id, employeeId: current.employeeId });
     return result.updated;
   },
   async adminWorksheets(organizationId: string, input: any, scope: OfficeScope) {

@@ -7,7 +7,7 @@ import { ROLE, assertSameOrganization } from "../../shared/tenancy.js";
 import { assertOfficeInScope, employeeOfficeFilter, type OfficeScope } from "../../shared/office-scope.js";
 import { formatWorkDateKey } from "../../shared/work-date.js";
 import { deliverNotification } from "../notifications/notification.service.js";
-import { emitToOrgRole, emitToUser } from "../../realtime/socket.server.js";
+import { emitToOrgAdmins, emitToUser } from "../../realtime/socket.server.js";
 import { softwareEngineerTemplateItems, SOFTWARE_ENGINEER_TEMPLATE_NAME } from "./default-template.js";
 import type { EvaluationItemSection, EvaluationStatus, Prisma } from "../../generated/prisma/client.js";
 
@@ -469,8 +469,7 @@ export const performanceService = {
       return { updated, notifications };
     });
     for (const n of result.notifications) await deliverNotification(n);
-    emitToOrgRole(current.organizationId, ROLE.ORG_ADMIN, "evaluation.self_submitted", { evaluationId: id, employeeId: e.id });
-    emitToOrgRole(current.organizationId, ROLE.OFFICE_ADMIN, "evaluation.self_submitted", { evaluationId: id, employeeId: e.id });
+    emitToOrgAdmins(current.organizationId, "evaluation.self_submitted", { evaluationId: id, employeeId: e.id });
     return serializeEvaluation(result.updated, { hideEvaluator: true });
   },
 
@@ -935,7 +934,7 @@ export const performanceService = {
       await deliverNotification(n);
       if (n.userId) emitToUser(n.userId, "evaluation.opened", { evaluationId: n.relatedEntityId });
     }
-    emitToOrgRole(organizationId, ROLE.ORG_ADMIN, "evaluation.opened", { cycleId, created: createdIds.length });
+    emitToOrgAdmins(organizationId, "evaluation.opened", { cycleId, created: createdIds.length });
     return this.getCycle(organizationId, cycleId);
   },
 

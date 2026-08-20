@@ -9,6 +9,20 @@ declare global {
         restricted: boolean;
         organizationId: string | null;
         officeIds: string[];
+        typ?: "access" | "display";
+        boardMode?: "ROOMS" | "PEOPLE" | "BOTH";
+      };
+      vault?: {
+        userId: string;
+        organizationId: string;
+        scope: "credentials" | "subscriptions" | "reveal";
+      };
+      display?: {
+        displayId: string;
+        organizationId: string;
+        officeId: string;
+        boardMode: "ROOMS" | "PEOPLE" | "BOTH";
+        permissions: string[];
       };
     }
   }

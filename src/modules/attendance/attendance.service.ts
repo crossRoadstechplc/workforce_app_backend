@@ -3,8 +3,7 @@ import { prisma } from "../../database/prisma.js";
 import { attendancePhotoService } from "./attendance-photo.service.js";
 import { AppError } from "../../shared/errors/app-error.js";
 import { deliverNotification } from "../notifications/notification.service.js";
-import { emitToOrgRole, emitToUser } from "../../realtime/socket.server.js";
-import { ROLE } from "../../shared/tenancy.js";
+import { emitToOfficeDisplay, emitToOrgAdmins, emitToUser } from "../../realtime/socket.server.js";
 import { formatWorkDateKey, todayWorkDate, todayWorkDateKey, workDateFromKey } from "../../shared/work-date.js";
 
 type LocationInput = { latitude: number; longitude: number; accuracyMeters: number; capturedAt: Date };
@@ -246,7 +245,8 @@ export const attendanceService = {
     });
     await deliverNotification(result.notification);
     emitToUser(userId, "attendance.checked_in", { timesheetId: result.timesheet.id, status: result.timesheet.status });
-    emitToOrgRole(employee.organizationId, ROLE.ORG_ADMIN, clock.isLate ? "employee.checked_in_late" : "employee.checked_in", { employeeId: employee.id, timesheetId: result.timesheet.id, lateMinutes: clock.lateMinutes });
+    emitToOrgAdmins(employee.organizationId, clock.isLate ? "employee.checked_in_late" : "employee.checked_in", { employeeId: employee.id, timesheetId: result.timesheet.id, lateMinutes: clock.lateMinutes });
+    emitToOfficeDisplay(employee.organizationId, employee.officeId, "display.people_changed", { employeeId: employee.id });
     return formatTimesheetResponse(result.timesheet)!;
   },
 
@@ -302,7 +302,8 @@ export const attendanceService = {
     });
     await deliverNotification(result.notification);
     emitToUser(userId, "attendance.checked_out", { timesheetId: result.timesheet.id, workedMinutes: metrics.workedMinutes, closedCarriedOverShift });
-    emitToOrgRole(employee.organizationId, ROLE.ORG_ADMIN, "employee.checked_out", { employeeId: employee.id, timesheetId: result.timesheet.id, workedMinutes: metrics.workedMinutes });
+    emitToOrgAdmins(employee.organizationId, "employee.checked_out", { employeeId: employee.id, timesheetId: result.timesheet.id, workedMinutes: metrics.workedMinutes });
+    emitToOfficeDisplay(employee.organizationId, employee.officeId, "display.people_changed", { employeeId: employee.id });
     return formatTimesheetResponse(result.timesheet)!;
   }
 };

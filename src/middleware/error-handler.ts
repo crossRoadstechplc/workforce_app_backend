@@ -8,7 +8,14 @@ function isPrismaKnownError(error: unknown): error is { code: string; meta?: unk
 }
 
 export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
-  if (err instanceof ZodError) return res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Invalid request", details: err.flatten(), requestId: req.id } });
+  if (err instanceof ZodError) {
+    const issues = err.issues.map((issue) => ({
+      path: issue.path.filter((part) => part !== "body" && part !== "query" && part !== "params").join(".") || "request",
+      message: issue.message
+    }));
+    const message = issues[0] ? `${issues[0].path}: ${issues[0].message}` : "Invalid request";
+    return res.status(400).json({ error: { code: "VALIDATION_ERROR", message, details: { issues, ...err.flatten() }, requestId: req.id } });
+  }
   if (err instanceof AppError) return res.status(err.statusCode).json({ error: { code: err.code, message: err.message, details: err.details, requestId: req.id } });
   if (isPrismaKnownError(err) && err.code === "P2002") return res.status(409).json({ error: { code: "DUPLICATE_RESOURCE", message: "A record with the same unique value already exists", details: err.meta, requestId: req.id } });
   if (isPrismaKnownError(err) && err.code === "P2025") return res.status(404).json({ error: { code: "RESOURCE_NOT_FOUND", message: "Requested resource was not found", requestId: req.id } });
@@ -16,7 +23,7 @@ export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
     return res.status(503).json({
       error: {
         code: "SCHEMA_MISSING",
-        message: "Meeting/performance tables are missing. Run: npx prisma migrate deploy",
+        message: "Required tables are missing. Run: npx prisma migrate deploy",
         details: err.meta,
         requestId: req.id
       }

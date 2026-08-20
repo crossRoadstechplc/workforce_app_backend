@@ -12,7 +12,10 @@ export const orgAdminPermissions = [
   "evaluation.view_office", "evaluation.review",
   "evaluation.cycle.manage", "evaluation.template.manage", "evaluation.finalize",
   "meeting.book", "meeting.view_own", "meeting.room.manage", "meeting.manage",
-  "notification.view", "report.view", "report.export", "audit.view"
+  "display.manage",
+  "chat.use",
+  "notification.view", "report.view", "report.export", "audit.view",
+  "vault.manage"
 ];
 
 export const officeAdminPermissions = [
@@ -22,6 +25,7 @@ export const officeAdminPermissions = [
   "leave.view_all", "leave.approve", "leave.reject",
   "evaluation.view_office", "evaluation.review",
   "meeting.book", "meeting.view_own",
+  "chat.use",
   "notification.view", "report.view", "report.export", "audit.view"
 ];
 
@@ -35,6 +39,7 @@ export const employeePermissions = [
   "leave.request", "leave.view_own",
   "evaluation.view_own", "evaluation.submit_own",
   "meeting.book", "meeting.view_own",
+  "chat.use",
   "notification.view"
 ];
 

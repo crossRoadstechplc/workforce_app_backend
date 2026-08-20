@@ -3,7 +3,7 @@ import { prisma } from "../../database/prisma.js";
 import { AppError } from "../../shared/errors/app-error.js";
 import { auditJson, type AuditContext } from "../../shared/audit.js";
 import { deliverNotification } from "../notifications/notification.service.js";
-import { emitToOrgRole, emitToUser } from "../../realtime/socket.server.js";
+import { emitToOfficeDisplay, emitToOrgAdmins, emitToUser } from "../../realtime/socket.server.js";
 import { ROLE, assertSameOrganization } from "../../shared/tenancy.js";
 import { assertOfficeInScope, employeeOfficeFilter, type OfficeScope } from "../../shared/office-scope.js";
 
@@ -96,11 +96,12 @@ export const leaveService = {
       return { request, notifications };
     });
     for (const n of result.notifications) await deliverNotification(n);
-    emitToOrgRole(e.organizationId, ROLE.ORG_ADMIN, "leave.requested", {
+    emitToOrgAdmins(e.organizationId, "leave.requested", {
       leaveRequestId: result.request.id,
       employeeId: e.id,
       status: result.request.status
     });
+    emitToOfficeDisplay(e.organizationId, e.officeId, "display.people_changed", { employeeId: e.id });
     return result.request;
   },
   async myList(userId: string, input: any) {
@@ -166,7 +167,7 @@ export const leaveService = {
     if (current.status !== "PENDING") throw new AppError(409, "LEAVE_NOT_CANCELLABLE", "Only pending leave can be cancelled by the employee");
     const e = await employeeContext(userId);
     const result = await prisma.leaveRequest.update({ where: { id }, data: { status: "CANCELLED" } });
-    emitToOrgRole(e.organizationId, ROLE.ORG_ADMIN, "leave.cancelled", { leaveRequestId: id, employeeId: current.employeeId });
+    emitToOrgAdmins(e.organizationId, "leave.cancelled", { leaveRequestId: id, employeeId: current.employeeId });
     return result;
   },
   async adminList(organizationId: string, input: any, scope: OfficeScope) {
@@ -289,7 +290,8 @@ export const leaveService = {
       status: decision,
       reason
     });
-    emitToOrgRole(organizationId, ROLE.ORG_ADMIN, "leave.decision_updated", { leaveRequestId: id, status: decision });
+    emitToOrgAdmins(organizationId, "leave.decision_updated", { leaveRequestId: id, status: decision });
+    emitToOfficeDisplay(organizationId, current.employee.officeId, "display.people_changed", { employeeId: current.employeeId });
     return result.updated;
   }
 };

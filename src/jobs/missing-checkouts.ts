@@ -3,8 +3,7 @@ import { prisma } from "../database/prisma.js";
 import { env } from "../config/env.js";
 import { logger } from "../config/logger.js";
 import { deliverNotification } from "../modules/notifications/notification.service.js";
-import { emitToOrgRole } from "../realtime/socket.server.js";
-import { ROLE } from "../shared/tenancy.js";
+import { emitToOrgAdmins } from "../realtime/socket.server.js";
 
 async function run() {
   const cutoff = new Date(Date.now() - env.MISSING_CHECKOUT_GRACE_MINUTES * 60_000);
@@ -36,7 +35,7 @@ async function run() {
     if (!result) continue;
     marked++;
     await deliverNotification(result);
-    emitToOrgRole(item.employee.organizationId, ROLE.ORG_ADMIN, "attendance.missing_checkout", {
+    emitToOrgAdmins(item.employee.organizationId, "attendance.missing_checkout", {
       timesheetId: item.id,
       employeeId: item.employeeId
     });

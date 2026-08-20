@@ -75,6 +75,7 @@ enum NotificationType {
   MEETING_BOOKED
   MEETING_RESCHEDULED
   MEETING_CANCELLED
+  CHAT_MESSAGE
 }
 
 enum DevicePlatform {
@@ -123,6 +124,52 @@ enum MeetingBookingStatus {
   CANCELLED
 }
 
+enum DisplayBoardMode {
+  ROOMS
+  PEOPLE
+  BOTH
+}
+
+enum ConversationType {
+  DIRECT
+  GROUP
+}
+
+enum ChatMemberRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum ChatMessageType {
+  TEXT
+  IMAGE
+  FILE
+  LINK
+}
+
+enum VaultCredentialType {
+  EMAIL
+  PASSWORD
+  WIFI
+  BANK
+  SOFTWARE
+  API_KEY
+  OTHER
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAUSED
+  CANCELLED
+  EXPIRED
+}
+
+enum SubscriptionBillingCycle {
+  MONTHLY
+  YEARLY
+}
+
 model Organization {
   id          String                     @id @default(uuid()) @db.Uuid
   name        String
@@ -141,6 +188,10 @@ model Organization {
   evaluations           Evaluation[]
   meetingRooms          MeetingRoom[]
   meetingBookings       MeetingBooking[]
+  displayDevices        DisplayDevice[]
+  chatConversations     ChatConversation[]
+  vaultCredentials      VaultCredential[]
+  officeSubscriptions   OfficeSubscription[]
   @@map("organizations")
 }
 
@@ -192,6 +243,11 @@ model User {
   finalizedEvaluations    Evaluation[]               @relation("EvaluationFinalizer")
   meetingBookings         MeetingBooking[]           @relation("MeetingBooker")
   cancelledMeetings       MeetingBooking[]           @relation("MeetingCanceller")
+  displayDevices          DisplayDevice[]            @relation("DisplayCreator")
+  createdChats            ChatConversation[]         @relation("ChatCreator")
+  chatParticipations      ChatParticipant[]
+  chatMessages            ChatMessage[]              @relation("ChatSender")
+  vaultCredentials        VaultCredential[]          @relation("VaultCredentialCreator")
   @@map("users")
 }
 
@@ -254,6 +310,9 @@ model Office {
   invites               Invite[]
   meetingRooms          MeetingRoom[]
   meetingBookings       MeetingBooking[]
+  displayDevices        DisplayDevice[]
+  vaultCredentials      VaultCredential[]
+  officeSubscriptions   OfficeSubscription[]
   @@unique([organizationId, name])
   @@index([organizationId, isActive])
   @@map("offices")
@@ -767,4 +826,145 @@ model MeetingBooking {
   @@index([bookedByUserId, startsAt])
   @@index([status, startsAt])
   @@map("meeting_bookings")
+}
+
+model DisplayDevice {
+  id               String           @id @default(uuid()) @db.Uuid
+  organizationId   String           @map("organization_id") @db.Uuid
+  officeId         String           @map("office_id") @db.Uuid
+  name             String
+  boardMode        DisplayBoardMode @default(BOTH) @map("board_mode")
+  isActive         Boolean          @default(true) @map("is_active")
+  pairingCodeHash  String?          @map("pairing_code_hash")
+  pairingExpiresAt DateTime?        @map("pairing_expires_at") @db.Timestamptz(6)
+  refreshTokenHash String?          @unique @map("refresh_token_hash")
+  lastSeenAt       DateTime?        @map("last_seen_at") @db.Timestamptz(6)
+  createdByUserId  String           @map("created_by_user_id") @db.Uuid
+  createdAt        DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization     Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  office           Office           @relation(fields: [officeId], references: [id], onDelete: Restrict)
+  createdBy        User             @relation("DisplayCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  @@index([organizationId, officeId])
+  @@index([organizationId, isActive])
+  @@index([pairingCodeHash])
+  @@map("display_devices")
+}
+
+model ChatConversation {
+  id             String           @id @default(uuid()) @db.Uuid
+  organizationId String           @map("organization_id") @db.Uuid
+  type           ConversationType
+  name           String?
+  directKey      String?          @map("direct_key")
+  createdById    String           @map("created_by_id") @db.Uuid
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  createdBy      User             @relation("ChatCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  participants   ChatParticipant[]
+  messages       ChatMessage[]
+  @@unique([organizationId, directKey])
+  @@index([organizationId, updatedAt])
+  @@index([createdById])
+  @@map("chat_conversations")
+}
+
+model ChatParticipant {
+  id             String         @id @default(uuid()) @db.Uuid
+  conversationId String         @map("conversation_id") @db.Uuid
+  userId         String         @map("user_id") @db.Uuid
+  role           ChatMemberRole @default(MEMBER)
+  lastReadAt     DateTime?      @map("last_read_at") @db.Timestamptz(6)
+  mutedUntil     DateTime?      @map("muted_until") @db.Timestamptz(6)
+  joinedAt       DateTime       @default(now()) @map("joined_at") @db.Timestamptz(6)
+  leftAt         DateTime?      @map("left_at") @db.Timestamptz(6)
+  conversation   ChatConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user           User             @relation(fields: [userId], references: [id], onDelete: Restrict)
+  @@unique([conversationId, userId])
+  @@index([userId, leftAt])
+  @@map("chat_participants")
+}
+
+model ChatMessage {
+  id             String          @id @default(uuid()) @db.Uuid
+  conversationId String          @map("conversation_id") @db.Uuid
+  senderId       String          @map("sender_id") @db.Uuid
+  type           ChatMessageType @default(TEXT)
+  body           String?
+  attachmentUrl  String?         @map("attachment_url")
+  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  deletedAt      DateTime?       @map("deleted_at") @db.Timestamptz(6)
+  conversation   ChatConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender         User             @relation("ChatSender", fields: [senderId], references: [id], onDelete: Restrict)
+  @@index([conversationId, createdAt])
+  @@index([senderId, createdAt])
+  @@map("chat_messages")
+}
+
+model VaultCredential {
+  id              String              @id @default(uuid()) @db.Uuid
+  organizationId  String              @map("organization_id") @db.Uuid
+  officeId        String?             @map("office_id") @db.Uuid
+  title           String
+  type            VaultCredentialType
+  username        String?
+  email           String?
+  url             String?
+  notes           String?
+  secretEncrypted String              @map("secret_encrypted")
+  lastRevealedAt  DateTime?           @map("last_revealed_at") @db.Timestamptz(6)
+  createdById     String              @map("created_by_id") @db.Uuid
+  createdAt       DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization    Organization        @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  office          Office?             @relation(fields: [officeId], references: [id], onDelete: SetNull)
+  createdBy       User                @relation("VaultCredentialCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  subscriptions   OfficeSubscription[]
+  @@index([organizationId])
+  @@index([officeId])
+  @@map("vault_credentials")
+}
+
+model OfficeSubscription {
+  id                String                   @id @default(uuid()) @db.Uuid
+  organizationId    String                   @map("organization_id") @db.Uuid
+  officeId          String?                  @map("office_id") @db.Uuid
+  name              String
+  vendor            String?
+  category          String?
+  status            SubscriptionStatus       @default(ACTIVE)
+  billingCycle      SubscriptionBillingCycle @default(MONTHLY) @map("billing_cycle")
+  seats             Int                      @default(1)
+  unitAmount        Decimal                  @map("unit_amount") @db.Decimal(12, 2)
+  currency          String                   @default("ETB")
+  startDate         DateTime                 @map("start_date") @db.Date
+  endDate           DateTime?                @map("end_date") @db.Date
+  renewalDay        Int?                     @map("renewal_day")
+  notes             String?
+  loginCredentialId String?                  @map("login_credential_id") @db.Uuid
+  createdAt         DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization      Organization             @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  office            Office?                  @relation(fields: [officeId], references: [id], onDelete: SetNull)
+  loginCredential   VaultCredential?         @relation(fields: [loginCredentialId], references: [id], onDelete: SetNull)
+  periods           SubscriptionPeriod[]
+  @@index([organizationId, status])
+  @@index([officeId])
+  @@map("office_subscriptions")
+}
+
+model SubscriptionPeriod {
+  id             String             @id @default(uuid()) @db.Uuid
+  subscriptionId String             @map("subscription_id") @db.Uuid
+  yearMonth      String             @map("year_month")
+  seats          Int
+  amount         Decimal            @db.Decimal(12, 2)
+  paid           Boolean            @default(false)
+  paidAt         DateTime?          @map("paid_at") @db.Timestamptz(6)
+  notes          String?
+  subscription   OfficeSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  @@unique([subscriptionId, yearMonth])
+  @@index([yearMonth])
+  @@map("subscription_periods")
 }
