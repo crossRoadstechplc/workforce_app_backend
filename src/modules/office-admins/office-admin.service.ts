@@ -6,6 +6,7 @@ import { generateTemporaryPassword } from "../../shared/password.js";
 import { pageMeta, pagination } from "../../shared/pagination.js";
 import { ROLE } from "../../shared/tenancy.js";
 import { createInviteInTx, deliverInvite } from "../invites/invite.service.js";
+import { resolveUserForOfficeAdmin } from "../users/user-provision.service.js";
 
 async function assertOfficesInOrg(organizationId: string, officeIds: string[]) {
   const offices = await prisma.office.findMany({ where: { id: { in: officeIds }, organizationId, isActive: true } });
@@ -19,26 +20,22 @@ export const officeAdminService = {
     audit: AuditContext
   ) {
     await assertOfficesInOrg(organizationId, input.officeIds);
+    const email = input.email.trim().toLowerCase();
     const deliveryMethod = input.deliveryMethod ?? "SHOW_PASSWORD";
     const temporaryPassword = input.temporaryPassword ?? generateTemporaryPassword();
     const passwordHash = await argon2.hash(temporaryPassword, { type: argon2.argon2id });
 
     const result = await prisma.$transaction(async (tx) => {
-      const role = await tx.role.findUnique({ where: { name: ROLE.OFFICE_ADMIN } });
-      if (!role) throw new AppError(500, "ROLE_NOT_CONFIGURED", "OFFICE_ADMIN role is not configured");
+      const { userId, created } = await resolveUserForOfficeAdmin(tx, {
+        email,
+        organizationId,
+        officeIds: input.officeIds,
+        passwordHash,
+        mustChangePassword: true
+      });
 
-      const existingEmail = await tx.user.findUnique({ where: { email: input.email.toLowerCase() } });
-      if (existingEmail) throw new AppError(409, "EMAIL_EXISTS", "Email is already registered");
-
-      const created = await tx.user.create({
-        data: {
-          email: input.email.toLowerCase(),
-          passwordHash,
-          mustChangePassword: true,
-          userRoles: { create: { roleId: role.id } },
-          memberships: { create: { organizationId } },
-          adminOffices: { create: input.officeIds.map((officeId) => ({ officeId })) }
-        },
+      const createdUser = await tx.user.findUniqueOrThrow({
+        where: { id: userId },
         include: {
           adminOffices: { include: { office: { select: { id: true, name: true } } } },
           userRoles: { include: { role: true } }
@@ -48,34 +45,48 @@ export const officeAdminService = {
       await tx.auditLog.create({
         data: {
           actorUserId: audit.actorUserId,
-          action: "OFFICE_ADMIN_CREATED",
+          action: created ? "OFFICE_ADMIN_CREATED" : "OFFICE_ADMIN_ROLE_ATTACHED",
           entityType: "User",
-          entityId: created.id,
-          newValues: { email: created.email, organizationId, officeIds: input.officeIds, roles: [ROLE.OFFICE_ADMIN] },
+          entityId: createdUser.id,
+          newValues: {
+            email: createdUser.email,
+            organizationId,
+            officeIds: input.officeIds,
+            roles: [ROLE.OFFICE_ADMIN],
+            attachedToExistingUser: !created
+          },
           ipAddress: audit.ipAddress,
           userAgent: audit.userAgent
         }
       });
 
-      if (deliveryMethod !== "SEND_EMAIL") return { user: created, invite: null as Awaited<ReturnType<typeof createInviteInTx>>["invite"] | null, token: null as string | null };
+      if (deliveryMethod !== "SEND_EMAIL") {
+        return { user: createdUser, created, invite: null as Awaited<ReturnType<typeof createInviteInTx>>["invite"] | null, token: null as string | null };
+      }
 
       const issued = await createInviteInTx(tx, {
         type: "OFFICE_ADMIN",
-        email: created.email,
+        email: createdUser.email,
         organizationId,
         invitedByUserId: audit.actorUserId,
-        userId: created.id,
+        userId: createdUser.id,
         officeIds: input.officeIds
       });
-      return { user: created, invite: issued.invite, token: issued.token };
+      return { user: createdUser, created, invite: issued.invite, token: issued.token };
     });
 
     if (deliveryMethod === "SEND_EMAIL" && result.invite && result.token) {
       const delivery = await deliverInvite(result.invite, result.token);
-      return { user: result.user, emailSent: delivery.emailSent, inviteId: result.invite.id, ...("emailError" in delivery ? { emailError: delivery.emailError } : {}) };
+      return {
+        user: result.user,
+        emailSent: delivery.emailSent,
+        inviteId: result.invite.id,
+        existingAccount: !result.created,
+        ...("emailError" in delivery ? { emailError: delivery.emailError } : {})
+      };
     }
 
-    return { user: result.user, temporaryPassword };
+    return result.created ? { user: result.user, temporaryPassword } : { user: result.user, existingAccount: true };
   },
 
   async list(organizationId: string, input: { page: number; pageSize: number; search?: string; status?: "ACTIVE" | "INACTIVE" | "LOCKED"; officeId?: string }) {

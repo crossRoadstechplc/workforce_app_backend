@@ -12,6 +12,12 @@ import { employeeService } from "../employees/employee.service.js";
 import { logger } from "../../config/logger.js";
 import { sendMail } from "../mail/mailer.js";
 import { employeeInviteEmail, officeAdminInviteEmail, orgAdminInviteEmail } from "../mail/templates.js";
+import {
+  assertCanInviteEmployee,
+  findUserByEmail,
+  inviteRequiresPassword,
+  normalizeEmail
+} from "../users/user-provision.service.js";
 
 type Tx = Prisma.TransactionClient;
 
@@ -38,14 +44,9 @@ const inviteInclude = {
   schedule: { select: { id: true, name: true } }
 } as const;
 
-async function assertNoExistingUser(email: string, tx: Tx | typeof prisma = prisma) {
-  const existing = await tx.user.findUnique({ where: { email } });
-  if (existing) throw new AppError(409, "EMAIL_EXISTS", "Email is already registered");
-}
-
 async function assertNoPendingInvite(organizationId: string, email: string, type: InviteType, tx: Tx | typeof prisma = prisma) {
   const pending = await tx.invite.findFirst({
-    where: { organizationId, email, type, status: "PENDING" }
+    where: { organizationId, email: normalizeEmail(email), type, status: "PENDING" }
   });
   if (pending) throw new AppError(409, "INVITE_PENDING", "A pending invite already exists for this email");
 }
@@ -65,12 +66,12 @@ export async function createInviteInTx(
   }
 ) {
   await assertNoPendingInvite(input.organizationId, input.email, input.type, tx);
-  if (input.type === "EMPLOYEE") await assertNoExistingUser(input.email, tx);
+  if (input.type === "EMPLOYEE") await assertCanInviteEmployee(input.email, input.organizationId, tx);
   const token = createInviteToken();
   const invite = await tx.invite.create({
     data: {
       type: input.type,
-      email: input.email,
+      email: normalizeEmail(input.email),
       organizationId: input.organizationId,
       invitedByUserId: input.invitedByUserId,
       userId: input.userId ?? null,
@@ -159,7 +160,7 @@ async function loadUsableInvite(token: string) {
   return invite;
 }
 
-function publicPreview(invite: Awaited<ReturnType<typeof loadUsableInvite>>) {
+function publicPreview(invite: Awaited<ReturnType<typeof loadUsableInvite>>, requiresPassword: boolean) {
   return {
     type: invite.type,
     email: invite.email,
@@ -169,7 +170,8 @@ function publicPreview(invite: Awaited<ReturnType<typeof loadUsableInvite>>) {
     office: invite.office,
     schedule: invite.schedule,
     offices: invite.officeIds,
-    payload: invite.payload
+    payload: invite.payload,
+    requiresPassword
   };
 }
 
@@ -191,22 +193,36 @@ function assertCanManageInvite(auth: AuthContext, invite: { type: InviteType; or
 
 export const inviteService = {
   async getPublic(token: string) {
-    return publicPreview(await loadUsableInvite(token));
+    const invite = await loadUsableInvite(token);
+    const requiresPassword = await inviteRequiresPassword(invite.email, invite.userId);
+    return publicPreview(invite, requiresPassword);
   },
 
-  async acceptAdmin(token: string, password: string) {
+  async acceptAdmin(token: string, password?: string) {
     const invite = await loadUsableInvite(token);
     if (invite.type !== "ORG_ADMIN" && invite.type !== "OFFICE_ADMIN") {
       throw new AppError(400, "INVITE_TYPE_MISMATCH", "This invite is not an administrator invite");
     }
     if (!invite.userId) throw new AppError(400, "INVITE_INCOMPLETE", "Invite is missing an account");
-    const passwordHash = await argon2.hash(password, { type: argon2.argon2id });
+
+    const user = await prisma.user.findUnique({ where: { id: invite.userId } });
+    if (!user) throw new AppError(400, "INVITE_INCOMPLETE", "Invite account was not found");
+
+    const needsPassword = user.mustChangePassword;
+    if (needsPassword && !password) {
+      throw new AppError(400, "PASSWORD_REQUIRED", "A password is required to activate this account");
+    }
+
     await prisma.$transaction(async (tx) => {
-      await tx.user.update({
-        where: { id: invite.userId! },
-        data: { passwordHash, mustChangePassword: false, status: "ACTIVE" }
-      });
-      await tx.refreshToken.updateMany({ where: { userId: invite.userId!, revokedAt: null }, data: { revokedAt: new Date() } });
+      if (needsPassword && password) {
+        const passwordHash = await argon2.hash(password, { type: argon2.argon2id });
+        await tx.user.update({
+          where: { id: invite.userId! },
+          data: { passwordHash, mustChangePassword: false, status: "ACTIVE" }
+        });
+        await tx.refreshToken.updateMany({ where: { userId: invite.userId!, revokedAt: null }, data: { revokedAt: new Date() } });
+      }
+
       await tx.invite.update({
         where: { id: invite.id },
         data: { status: "ACCEPTED", acceptedAt: new Date() }
@@ -217,11 +233,11 @@ export const inviteService = {
           action: "INVITE_ACCEPTED",
           entityType: "Invite",
           entityId: invite.id,
-          newValues: auditJson({ type: invite.type, email: invite.email })
+          newValues: auditJson({ type: invite.type, email: invite.email, existingAccount: !needsPassword })
         }
       });
     });
-    return { email: invite.email, type: invite.type, organization: invite.organization };
+    return { email: invite.email, type: invite.type, organization: invite.organization, existingAccount: !needsPassword };
   },
 
   async acceptEmployee(token: string, input: {
@@ -235,10 +251,16 @@ export const inviteService = {
     employeeCode?: string;
     officeId?: string | null;
     scheduleId?: string | null;
-    password: string;
+    password?: string;
   }) {
     const invite = await loadUsableInvite(token);
     if (invite.type !== "EMPLOYEE") throw new AppError(400, "INVITE_TYPE_MISMATCH", "This invite is not an employee invite");
+
+    const existing = await findUserByEmail(invite.email);
+    const needsPassword = !existing || existing.mustChangePassword;
+    if (needsPassword && !input.password) {
+      throw new AppError(400, "PASSWORD_REQUIRED", "A password is required to activate this account");
+    }
 
     const payload = (invite.payload ?? {}) as {
       employmentStartDate?: string;
@@ -268,8 +290,9 @@ export const inviteService = {
         employmentStartDate: input.employmentStartDate,
         officeId,
         scheduleId,
-        temporaryPassword: input.password,
-        mustChangePassword: false
+        ...(needsPassword && input.password
+          ? { temporaryPassword: input.password, mustChangePassword: false }
+          : {})
       },
       { actorUserId: invite.invitedByUserId },
       { allOffices: true, officeIds: [] }
@@ -283,7 +306,8 @@ export const inviteService = {
     return {
       email: invite.email,
       employeeCode: created.employee.employeeCode,
-      organization: invite.organization
+      organization: invite.organization,
+      existingAccount: created.existingAccount ?? false
     };
   },
 
@@ -388,7 +412,7 @@ export const inviteService = {
     if (invite.status !== "PENDING" && invite.status !== "EXPIRED") {
       throw new AppError(400, "INVITE_NOT_RESENDABLE", "Only pending or expired invites can be resent");
     }
-    if (invite.type === "EMPLOYEE") await assertNoExistingUser(invite.email);
+    if (invite.type === "EMPLOYEE") await assertCanInviteEmployee(invite.email, invite.organizationId);
 
     const token = createInviteToken();
     const updated = await prisma.invite.update({

@@ -6,6 +6,7 @@ import { generateTemporaryPassword } from "../../shared/password.js";
 import { pageMeta, pagination } from "../../shared/pagination.js";
 import { ROLE } from "../../shared/tenancy.js";
 import { createInviteInTx, deliverInvite } from "../invites/invite.service.js";
+import { resolveUserForOrgAdmin } from "../users/user-provision.service.js";
 
 const DEFAULT_LEAVE_TYPES = ["Annual Leave", "Sick Leave", "Emergency Leave", "Unpaid Leave", "Other Leave"];
 
@@ -154,58 +155,60 @@ export const platformService = {
   ) {
     const organization = await this.getOrganization(input.organizationId);
     if (!organization.isActive) throw new AppError(400, "ORG_INACTIVE", "Cannot add admins to an inactive organization");
+    const email = input.email.trim().toLowerCase();
     const deliveryMethod = input.deliveryMethod ?? "SHOW_PASSWORD";
     const temporaryPassword = input.temporaryPassword ?? generateTemporaryPassword();
     const passwordHash = await argon2.hash(temporaryPassword, { type: argon2.argon2id });
 
     const result = await prisma.$transaction(async (tx) => {
-      const role = await tx.role.findUnique({ where: { name: ROLE.ORG_ADMIN } });
-      if (!role) throw new AppError(500, "ROLE_NOT_CONFIGURED", "ORG_ADMIN role is not configured");
+      const { userId, created } = await resolveUserForOrgAdmin(tx, {
+        email,
+        organizationId: organization.id,
+        passwordHash,
+        mustChangePassword: true
+      });
 
-      const existingEmail = await tx.user.findUnique({ where: { email: input.email } });
-      if (existingEmail) throw new AppError(409, "EMAIL_EXISTS", "Email is already registered");
-
-      const user = await tx.user.create({
-        data: {
-          email: input.email,
-          passwordHash,
-          mustChangePassword: true,
-          userRoles: { create: { roleId: role.id } },
-          memberships: { create: { organizationId: organization.id } }
-        },
+      const user = await tx.user.findUniqueOrThrow({
+        where: { id: userId },
         include: { memberships: { include: { organization: true } }, userRoles: { include: { role: true } } }
       });
 
       await tx.auditLog.create({
         data: {
           actorUserId: audit.actorUserId,
-          action: "ORG_ADMIN_CREATED",
+          action: created ? "ORG_ADMIN_CREATED" : "ORG_ADMIN_ROLE_ATTACHED",
           entityType: "User",
           entityId: user.id,
-          newValues: { email: user.email, organizationId: organization.id, roles: [ROLE.ORG_ADMIN] },
+          newValues: { email: user.email, organizationId: organization.id, roles: [ROLE.ORG_ADMIN], attachedToExistingUser: !created },
           ipAddress: audit.ipAddress,
           userAgent: audit.userAgent
         }
       });
 
-      if (deliveryMethod !== "SEND_EMAIL") return { user, invite: null as Awaited<ReturnType<typeof createInviteInTx>>["invite"] | null, token: null as string | null };
+      if (deliveryMethod !== "SEND_EMAIL") return { user, created, invite: null as Awaited<ReturnType<typeof createInviteInTx>>["invite"] | null, token: null as string | null };
 
       const issued = await createInviteInTx(tx, {
         type: "ORG_ADMIN",
-        email: input.email,
+        email: user.email,
         organizationId: organization.id,
         invitedByUserId: audit.actorUserId,
         userId: user.id
       });
-      return { user, invite: issued.invite, token: issued.token };
+      return { user, created, invite: issued.invite, token: issued.token };
     });
 
     if (deliveryMethod === "SEND_EMAIL" && result.invite && result.token) {
       const delivery = await deliverInvite(result.invite, result.token);
-      return { user: result.user, emailSent: delivery.emailSent, inviteId: result.invite.id, ...("emailError" in delivery ? { emailError: delivery.emailError } : {}) };
+      return {
+        user: result.user,
+        emailSent: delivery.emailSent,
+        inviteId: result.invite.id,
+        existingAccount: !result.created,
+        ...("emailError" in delivery ? { emailError: delivery.emailError } : {})
+      };
     }
 
-    return { user: result.user, temporaryPassword };
+    return result.created ? { user: result.user, temporaryPassword } : { user: result.user, existingAccount: true };
   },
 
   async listOrgAdmins(input: { page: number; pageSize: number; organizationId?: string; search?: string; status?: "ACTIVE" | "INACTIVE" | "LOCKED" }) {

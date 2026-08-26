@@ -8,6 +8,14 @@ import { pageMeta, pagination } from "../../shared/pagination.js";
 import { assertSameOrganization } from "../../shared/tenancy.js";
 import { assertOfficeInScope, employeeOfficeFilter, type OfficeScope } from "../../shared/office-scope.js";
 import { supervisorPortalAccess, validateSupervisor } from "../performance/performance.service.js";
+import {
+  assertCanBecomeEmployee,
+  assertNotPlatformAdmin,
+  ensureOrgMembership,
+  ensureRole,
+  findUserByEmail,
+  normalizeEmail
+} from "../users/user-provision.service.js";
 
 const supervisorSelect = {
   id: true,
@@ -77,16 +85,82 @@ export const employeeService = {
     await validateSupervisor(organizationId, null, input.supervisorId);
 
     const created = await prisma.$transaction(async (tx) => {
+      const employeeCode = input.employeeCode ?? (await generateEmployeeCode(tx, organizationId));
+      const normalizedEmail = normalizeEmail(input.email);
+      const existing = await findUserByEmail(normalizedEmail, tx);
+
+      if (existing) {
+        assertNotPlatformAdmin(existing);
+        await assertCanBecomeEmployee(existing.id, organizationId, tx);
+        await ensureRole(existing.id, "EMPLOYEE", tx);
+        await ensureOrgMembership(existing.id, organizationId, tx);
+
+        const employee = await tx.employee.create({
+          data: {
+            organizationId,
+            userId: existing.id,
+            employeeCode,
+            firstName: input.firstName,
+            middleName: input.middleName,
+            lastName: input.lastName,
+            phone: input.phone,
+            jobTitle: input.jobTitle,
+            department: input.department,
+            employmentStartDate: input.employmentStartDate,
+            officeId: input.officeId,
+            scheduleId: input.scheduleId,
+            supervisorId: input.supervisorId
+          },
+          include: employeeInclude
+        });
+
+        if (input.temporaryPassword) {
+          const passwordHash = await argon2.hash(input.temporaryPassword, { type: argon2.argon2id });
+          await tx.user.update({
+            where: { id: existing.id },
+            data: {
+              passwordHash,
+              ...(input.mustChangePassword !== undefined ? { mustChangePassword: input.mustChangePassword } : {})
+            }
+          });
+        }
+
+        await tx.auditLog.create({
+          data: {
+            actorUserId: audit.actorUserId,
+            action: "EMPLOYEE_CREATED",
+            entityType: "Employee",
+            entityId: employee.id,
+            newValues: {
+              email: existing.email,
+              employeeCode: employee.employeeCode,
+              organizationId,
+              officeId: employee.officeId,
+              scheduleId: employee.scheduleId,
+              status: employee.status,
+              attachedToExistingUser: true
+            },
+            ipAddress: audit.ipAddress,
+            userAgent: audit.userAgent
+          }
+        });
+
+        return {
+          employee: withSupervisorAccess(employee),
+          temporaryPassword: input.temporaryPassword,
+          existingAccount: true as const
+        };
+      }
+
       const employeeRole = await tx.role.findUnique({ where: { name: "EMPLOYEE" } });
       if (!employeeRole) throw new AppError(500, "ROLE_NOT_CONFIGURED", "EMPLOYEE role is not configured");
 
-      const employeeCode = input.employeeCode ?? (await generateEmployeeCode(tx, organizationId));
       const temporaryPassword = input.temporaryPassword ?? generateMemorableTemporaryPassword(employeeCode);
       const passwordHash = await argon2.hash(temporaryPassword, { type: argon2.argon2id });
 
       const user = await tx.user.create({
         data: {
-          email: input.email,
+          email: normalizedEmail,
           passwordHash,
           mustChangePassword: input.mustChangePassword ?? true,
           userRoles: { create: { roleId: employeeRole.id } },
@@ -129,7 +203,7 @@ export const employeeService = {
           userAgent: audit.userAgent
         }
       });
-      return { employee: withSupervisorAccess(user.employee!), temporaryPassword };
+      return { employee: withSupervisorAccess(user.employee!), temporaryPassword, existingAccount: false as const };
     });
 
     return created;

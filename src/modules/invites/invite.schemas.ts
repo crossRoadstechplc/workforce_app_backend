@@ -11,7 +11,7 @@ export const inviteIdParamsSchema = z.object({
 });
 
 export const acceptAdminSchema = z.object({
-  password: invitePasswordSchema
+  password: invitePasswordSchema.optional()
 });
 
 export const acceptEmployeeSchema = z.object({
@@ -28,7 +28,7 @@ export const acceptEmployeeSchema = z.object({
   ),
   officeId: z.string().uuid().optional().nullable(),
   scheduleId: z.string().uuid().optional().nullable(),
-  password: invitePasswordSchema
+  password: invitePasswordSchema.optional()
 });
 
 export const createEmployeeInviteSchema = z.object({
