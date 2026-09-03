@@ -70,11 +70,12 @@ async function issueSession(userId: string, contextKey: string, deviceId?: strin
   };
 }
 
-async function verifyCredentials(input: { login: string; password: string; organizationSlug?: string }) {
+async function verifyCredentials(input: { login: string; password: string; organizationSlug?: string | null }) {
   const normalizedLogin = input.login.trim();
   const password = input.password.trim();
   const email = normalizedLogin.toLowerCase();
   const code = normalizedLogin.toUpperCase();
+  const organizationSlug = input.organizationSlug?.trim() || undefined;
 
   let userId: string | null = null;
   const byEmail = await prisma.user.findFirst({ where: { email }, select: { id: true, status: true, passwordHash: true } });
@@ -84,15 +85,15 @@ async function verifyCredentials(input: { login: string; password: string; organ
       throw new AppError(401, "INVALID_CREDENTIALS", "Invalid login or password");
     }
   } else {
-    const employeeWhere = input.organizationSlug
-      ? { employeeCode: code, organization: { slug: input.organizationSlug.toLowerCase() } }
+    const employeeWhere = organizationSlug
+      ? { employeeCode: code, organization: { slug: organizationSlug.toLowerCase() } }
       : { employeeCode: code };
     const employee = await prisma.employee.findFirst({
       where: employeeWhere,
       include: { user: { select: { id: true, status: true, passwordHash: true } } }
     });
     if (!employee) throw new AppError(401, "INVALID_CREDENTIALS", "Invalid login or password");
-    if (!input.organizationSlug) {
+    if (!organizationSlug) {
       const collisions = await prisma.employee.count({ where: { employeeCode: code } });
       if (collisions > 1) {
         throw new AppError(400, "ORG_SLUG_REQUIRED", "Multiple organizations use this employee code. Provide organizationSlug.");
