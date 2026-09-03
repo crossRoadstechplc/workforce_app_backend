@@ -2,10 +2,10 @@ import { z } from "zod";
 export const loginSchema = z.object({
   login: z.string().min(3),
   password: z.string().min(8),
-  deviceId: z.string().max(200).optional(),
-  organizationSlug: z.string().min(2).max(80).optional(),
-  contextKey: z.string().min(3).max(120).optional(),
-  lastContextKey: z.string().min(3).max(120).optional()
+  deviceId: z.string().max(200).optional().nullable(),
+  organizationSlug: z.string().min(2).max(80).optional().nullable(),
+  contextKey: z.string().min(3).max(120).optional().nullable(),
+  lastContextKey: z.string().min(3).max(120).optional().nullable()
 });
 export const refreshSchema = z.object({ refreshToken: z.string().min(20), deviceId: z.string().max(200).optional() });
 export const changePasswordSchema = z.object({

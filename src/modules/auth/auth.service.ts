@@ -117,28 +117,28 @@ export const authService = {
   async login(input: {
     login: string;
     password: string;
-    deviceId?: string;
-    organizationSlug?: string;
-    contextKey?: string;
-    lastContextKey?: string;
+    deviceId?: string | null;
+    organizationSlug?: string | null;
+    contextKey?: string | null;
+    lastContextKey?: string | null;
   }) {
     const userId = await verifyCredentials(input);
     await prisma.user.update({ where: { id: userId }, data: { lastLoginAt: new Date() } });
 
     const contexts = await getAvailableContexts(userId);
-    const defaultContextKey = resolveDefaultContextKey(contexts, input.lastContextKey ?? input.contextKey);
+    const defaultContextKey = resolveDefaultContextKey(contexts, input.lastContextKey ?? input.contextKey ?? undefined);
 
     if (input.contextKey) {
-      return issueSession(userId, input.contextKey, input.deviceId);
+      return issueSession(userId, input.contextKey, input.deviceId ?? undefined);
     }
 
     const user = await prisma.user.findUnique({ where: { id: userId }, select: { mustChangePassword: true } });
     if (user?.mustChangePassword && defaultContextKey) {
-      return issueSession(userId, defaultContextKey, input.deviceId);
+      return issueSession(userId, defaultContextKey, input.deviceId ?? undefined);
     }
 
     if (contexts.length <= 1 && defaultContextKey) {
-      return issueSession(userId, defaultContextKey, input.deviceId);
+      return issueSession(userId, defaultContextKey, input.deviceId ?? undefined);
     }
 
     const preAuthToken = await signPreAuthToken(userId);
