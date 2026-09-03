@@ -8,11 +8,20 @@ import { assertOfficeInScope, employeeOfficeFilter, type OfficeScope } from "../
 import { formatWorkDateKey } from "../../shared/work-date.js";
 import { deliverNotification } from "../notifications/notification.service.js";
 import { emitToOrgAdmins, emitToUser } from "../../realtime/socket.server.js";
-import { softwareEngineerTemplateItems, SOFTWARE_ENGINEER_TEMPLATE_NAME } from "./default-template.js";
-import type { EvaluationItemSection, EvaluationStatus, Prisma } from "../../generated/prisma/client.js";
+import {
+  LEGACY_EVALUATION_TEMPLATE_NAMES,
+  RELIABILITY_ATTENDANCE_ITEM_KEY,
+  STANDARD_PERFORMANCE_TEMPLATE_NAME,
+  standardPerformanceTemplateItems
+} from "./default-template.js";
+import { performanceBand, performanceBandLabel, rateReliabilityAttendance } from "./attendance-rating.js";
+import type { EvaluationItemSection, EvaluationScoringSource, EvaluationStatus, Prisma } from "../../generated/prisma/client.js";
 
 const PORTAL_ROLES = new Set([ROLE.ORG_ADMIN, ROLE.OFFICE_ADMIN, "ADMIN"]);
-const SCORED_SECTIONS: EvaluationItemSection[] = ["METRIC", "RESPONSIBILITY"];
+const SCORED_SECTIONS: EvaluationItemSection[] = ["METRIC"];
+const SCORE_MIN = 1;
+const SCORE_MAX = 5;
+const SCORE_TOTAL = 50;
 const employeePersonSelect = {
   id: true,
   firstName: true,
@@ -20,7 +29,8 @@ const employeePersonSelect = {
   lastName: true,
   employeeCode: true,
   jobTitle: true,
-  department: true,
+  department: { select: { id: true, name: true } },
+  evaluationTemplateId: true,
   officeId: true,
   supervisorId: true,
   userId: true,
@@ -50,7 +60,25 @@ type PeriodSnapshot = {
   approvedLeaveDays: number;
   overtimeMinutes: number;
   workedMinutes: number;
+  expectedDays: number;
+  unexcusedAbsentDays: number;
+  lateRate: number;
+  systemAttendanceScore: number;
+  systemAttendanceDeductions: Array<{ reason: string; amount: number }>;
 };
+
+type ScoreLike = {
+  section: EvaluationItemSection;
+  itemKey?: string;
+  scoringSource?: EvaluationScoringSource | string | null;
+  selfScore: number | null;
+  evaluatorScore: number | null;
+  systemScore?: number | null;
+};
+
+function isSystemScored(s: { itemKey?: string; scoringSource?: string | null }) {
+  return s.scoringSource === "SYSTEM_ATTENDANCE" || s.itemKey === RELIABILITY_ATTENDANCE_ITEM_KEY;
+}
 
 function inclusiveRange(from: Date, to: Date) {
   const start = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate()));
@@ -69,12 +97,6 @@ function slugKey(section: string, label: string, index: number) {
     .replace(/^_|_$/g, "")
     .slice(0, 60);
   return `${section.toLowerCase()}.${slug || `item_${index}`}`;
-}
-
-function average(values: Array<number | null | undefined>) {
-  const nums = values.filter((v): v is number => typeof v === "number");
-  if (!nums.length) return null;
-  return Math.round((nums.reduce((a, b) => a + b, 0) / nums.length) * 100) / 100;
 }
 
 function dec(value: number | null) {
@@ -167,15 +189,36 @@ export function supervisorPortalAccess(supervisor: { user: { userRoles: Array<{ 
   return userHasPortalRole(supervisor.user.userRoles);
 }
 
+async function expectedWorkdays(employeeId: string, from: Date, to: Date) {
+  const emp = await prisma.employee.findUnique({
+    where: { id: employeeId },
+    select: { schedule: { select: { workingDays: true, days: { select: { weekday: true } } } } }
+  });
+  const weekdays =
+    emp?.schedule?.days?.length
+      ? emp.schedule.days.map((d) => d.weekday)
+      : emp?.schedule?.workingDays?.length
+        ? emp.schedule.workingDays
+        : [1, 2, 3, 4, 5];
+  const start = DateTime.fromJSDate(from, { zone: "utc" }).startOf("day");
+  const end = DateTime.fromJSDate(to, { zone: "utc" }).startOf("day");
+  let n = 0;
+  for (let d = start; d <= end; d = d.plus({ days: 1 })) {
+    if (weekdays.includes(d.weekday)) n += 1;
+  }
+  return n;
+}
+
 async function periodSnapshot(employeeId: string, from: Date, to: Date): Promise<PeriodSnapshot> {
   const { start, end } = inclusiveRange(from, to);
-  const [timesheets, worksheets, leaveRequests] = await prisma.$transaction([
+  const [timesheets, worksheets, leaveRequests, expectedDays] = await Promise.all([
     prisma.timesheet.findMany({ where: { employeeId, workDate: { gte: start, lt: end } } }),
     prisma.worksheet.findMany({ where: { employeeId, workDate: { gte: start, lt: end } }, select: { id: true } }),
     prisma.leaveRequest.findMany({
       where: { employeeId, startDate: { lt: end }, endDate: { gte: start }, status: "APPROVED" },
       select: { numberOfDays: true }
-    })
+    }),
+    expectedWorkdays(employeeId, from, to)
   ]);
   const totals = timesheets.reduce(
     (a, x) => ({
@@ -187,53 +230,123 @@ async function periodSnapshot(employeeId: string, from: Date, to: Date): Promise
     }),
     { workedMinutes: 0, lateMinutes: 0, overtimeMinutes: 0, lateDays: 0, missingCheckoutDays: 0 }
   );
+  const approvedLeaveDays = leaveRequests.reduce((n, x) => n + Number(x.numberOfDays), 0);
+  const rating = rateReliabilityAttendance({
+    expectedDays,
+    attendanceDays: timesheets.length,
+    lateDays: totals.lateDays,
+    lateMinutes: totals.lateMinutes,
+    missingCheckoutDays: totals.missingCheckoutDays,
+    approvedLeaveDays
+  });
   return {
     attendanceDays: timesheets.length,
     lateDays: totals.lateDays,
     lateMinutes: totals.lateMinutes,
     missingCheckoutDays: totals.missingCheckoutDays,
     worksheetsSubmitted: worksheets.length,
-    approvedLeaveDays: leaveRequests.reduce((n, x) => n + Number(x.numberOfDays), 0),
+    approvedLeaveDays,
     overtimeMinutes: totals.overtimeMinutes,
-    workedMinutes: totals.workedMinutes
+    workedMinutes: totals.workedMinutes,
+    expectedDays: rating.expectedDays,
+    unexcusedAbsentDays: rating.unexcusedAbsentDays,
+    lateRate: rating.lateRate,
+    systemAttendanceScore: rating.score,
+    systemAttendanceDeductions: rating.deductions
   };
 }
 
 export async function ensureDefaultTemplate(organizationId: string) {
-  const existing = await prisma.evaluationTemplate.findFirst({
-    where: { organizationId, name: SOFTWARE_ENGINEER_TEMPLATE_NAME },
+  let existing = await prisma.evaluationTemplate.findFirst({
+    where: { organizationId, name: STANDARD_PERFORMANCE_TEMPLATE_NAME },
     include: { items: { orderBy: { sortOrder: "asc" } } }
   });
-  if (existing) return existing;
-  const hasDefault = await prisma.evaluationTemplate.findFirst({ where: { organizationId, isDefault: true } });
-  return prisma.evaluationTemplate.create({
-    data: {
+  if (!existing) {
+    await prisma.evaluationTemplate.updateMany({ where: { organizationId, isDefault: true }, data: { isDefault: false } });
+    existing = await prisma.evaluationTemplate.create({
+      data: {
+        organizationId,
+        name: STANDARD_PERFORMANCE_TEMPLATE_NAME,
+        description: "Standard 10-area evaluation (1–5). Reliability and Attendance is rated automatically from late and unexcused absence. Approved leave does not reduce the score.",
+        isDefault: true,
+        items: {
+          create: standardPerformanceTemplateItems.map((i) => ({
+            section: i.section,
+            itemKey: i.itemKey,
+            label: i.label,
+            prompt: i.prompt,
+            scoringSource: i.scoringSource,
+            sortOrder: i.sortOrder
+          }))
+        }
+      },
+      include: { items: { orderBy: { sortOrder: "asc" } } }
+    });
+  } else if (!existing.isDefault || !existing.isActive) {
+    await prisma.evaluationTemplate.updateMany({ where: { organizationId, isDefault: true, NOT: { id: existing.id } }, data: { isDefault: false } });
+    existing = await prisma.evaluationTemplate.update({
+      where: { id: existing.id },
+      data: { isDefault: true, isActive: true },
+      include: { items: { orderBy: { sortOrder: "asc" } } }
+    });
+  }
+  await retireLegacyTemplates(organizationId, existing.id);
+  return existing;
+}
+
+/** Deactivate Software Engineer and old responsibility/skills templates; reassign employees to the standard form. */
+async function retireLegacyTemplates(organizationId: string, standardTemplateId: string) {
+  const legacy = await prisma.evaluationTemplate.findMany({
+    where: {
       organizationId,
-      name: SOFTWARE_ENGINEER_TEMPLATE_NAME,
-      description: "Internal performance evaluation for software engineers (full stack).",
-      jobTitleHint: "Software Engineer",
-      isDefault: !hasDefault,
-      items: { create: softwareEngineerTemplateItems }
+      id: { not: standardTemplateId },
+      OR: [
+        { name: { in: [...LEGACY_EVALUATION_TEMPLATE_NAMES] } },
+        { items: { some: { section: { in: ["RESPONSIBILITY", "SKILL_IMPROVED", "GOAL"] } } } }
+      ]
     },
-    include: { items: { orderBy: { sortOrder: "asc" } } }
+    select: { id: true }
+  });
+  if (!legacy.length) return;
+  const ids = legacy.map((t) => t.id);
+  await prisma.evaluationTemplate.updateMany({
+    where: { id: { in: ids } },
+    data: { isActive: false, isDefault: false }
+  });
+  await prisma.employee.updateMany({
+    where: { organizationId, evaluationTemplateId: { in: ids } },
+    data: { evaluationTemplateId: standardTemplateId }
   });
 }
 
 async function pickTemplate(organizationId: string, jobTitle: string | null | undefined, templateId?: string | null) {
+  const standard = await ensureDefaultTemplate(organizationId);
   if (templateId) {
     const t = await prisma.evaluationTemplate.findFirst({
       where: { id: templateId, organizationId, isActive: true },
       include: { items: { orderBy: { sortOrder: "asc" } } }
     });
-    if (!t) throw new AppError(400, "INVALID_TEMPLATE", "Template does not exist or is inactive");
+    if (!t) return standard;
+    if (LEGACY_EVALUATION_TEMPLATE_NAMES.includes(t.name as (typeof LEGACY_EVALUATION_TEMPLATE_NAMES)[number])) return standard;
+    if (t.items.some((i) => i.section === "RESPONSIBILITY" || i.section === "SKILL_IMPROVED" || i.section === "GOAL")) {
+      return standard;
+    }
     return t;
   }
-  await ensureDefaultTemplate(organizationId);
   const templates = await prisma.evaluationTemplate.findMany({
-    where: { organizationId, isActive: true },
+    where: {
+      organizationId,
+      isActive: true,
+      NOT: {
+        OR: [
+          { name: { in: [...LEGACY_EVALUATION_TEMPLATE_NAMES] } },
+          { items: { some: { section: { in: ["RESPONSIBILITY", "SKILL_IMPROVED", "GOAL"] } } } }
+        ]
+      }
+    },
     include: { items: { orderBy: { sortOrder: "asc" } } }
   });
-  if (!templates.length) throw new AppError(400, "NO_TEMPLATE", "Create an evaluation template before opening a cycle");
+  if (!templates.length) return standard;
   const title = (jobTitle ?? "").toLowerCase();
   const hinted = title
     ? templates.find((t) => t.jobTitleHint && title.includes(t.jobTitleHint.toLowerCase()))
@@ -247,9 +360,12 @@ function serializeEvaluation(row: Prisma.EvaluationGetPayload<{ include: typeof 
     itemKey: s.itemKey,
     section: s.section,
     label: s.label,
+    prompt: s.prompt,
+    scoringSource: s.scoringSource,
     sortOrder: s.sortOrder,
-    selfScore: s.selfScore,
-    evaluatorScore: opts.hideEvaluator ? null : s.evaluatorScore,
+    selfScore: isSystemScored(s) ? s.systemScore : s.selfScore,
+    evaluatorScore: isSystemScored(s) ? s.systemScore : opts.hideEvaluator ? null : s.evaluatorScore,
+    systemScore: s.systemScore,
     evaluatorComment: opts.hideEvaluator ? null : s.evaluatorComment
   }));
   const goals = row.goals.map((g) => ({
@@ -276,6 +392,13 @@ function serializeEvaluation(row: Prisma.EvaluationGetPayload<{ include: typeof 
     actionPlan: opts.hideEvaluator ? null : row.actionPlan,
     overallSelf: row.overallSelf == null ? null : Number(row.overallSelf),
     overallEvaluator: opts.hideEvaluator || row.overallEvaluator == null ? null : Number(row.overallEvaluator),
+    overallSelfBand: performanceBand(row.overallSelf == null ? null : Number(row.overallSelf)),
+    overallSelfBandLabel: performanceBandLabel(performanceBand(row.overallSelf == null ? null : Number(row.overallSelf))),
+    overallBand: opts.hideEvaluator ? null : performanceBand(row.overallEvaluator == null ? null : Number(row.overallEvaluator)),
+    overallBandLabel: opts.hideEvaluator
+      ? null
+      : performanceBandLabel(performanceBand(row.overallEvaluator == null ? null : Number(row.overallEvaluator))),
+    ratingScale: { min: SCORE_MIN, max: SCORE_MAX, total: SCORE_TOTAL },
     selfSubmittedAt: row.selfSubmittedAt,
     evaluatorUserId: opts.hideEvaluator ? null : row.evaluatorUserId,
     evaluatorSubmittedAt: opts.hideEvaluator ? null : row.evaluatorSubmittedAt,
@@ -294,6 +417,8 @@ function serializeEvaluation(row: Prisma.EvaluationGetPayload<{ include: typeof 
     employee: {
       ...row.employee,
       name: personName(row.employee),
+      department: row.employee.department?.name ?? null,
+      departmentId: row.employee.department?.id ?? null,
       supervisor: row.employee.supervisor
         ? { ...row.employee.supervisor, name: personName(row.employee.supervisor) }
         : null
@@ -309,12 +434,20 @@ function hideEvaluatorFor(status: EvaluationStatus, isAdmin: boolean) {
   return status !== "EVALUATOR_SUBMITTED" && status !== "FINALIZED";
 }
 
-function computeAverages(scores: Array<{ section: EvaluationItemSection; selfScore: number | null; evaluatorScore: number | null }>) {
-  const scored = scores.filter((s) => SCORED_SECTIONS.includes(s.section));
-  return {
-    overallSelf: average(scored.map((s) => s.selfScore)),
-    overallEvaluator: average(scored.map((s) => s.evaluatorScore))
+function officialValue(s: ScoreLike, side: "self" | "evaluator") {
+  if (isSystemScored(s)) return s.systemScore ?? null;
+  return side === "self" ? s.selfScore : s.evaluatorScore;
+}
+
+function computeAverages(scores: ScoreLike[]) {
+  const scored = scores.filter((s) => SCORED_SECTIONS.includes(s.section) || isSystemScored(s));
+  const selfVals = scored.map((s) => officialValue(s, "self"));
+  const evalVals = scored.map((s) => officialValue(s, "evaluator"));
+  const sum = (vals: Array<number | null>) => {
+    if (vals.some((v) => v == null)) return null;
+    return vals.reduce((a, b) => (a ?? 0) + (b ?? 0), 0);
   };
+  return { overallSelf: sum(selfVals), overallEvaluator: sum(evalVals) };
 }
 
 async function nextEvaluationNumber(tx: Prisma.TransactionClient, organizationId: string, prefix: string) {
@@ -325,15 +458,6 @@ async function nextEvaluationNumber(tx: Prisma.TransactionClient, organizationId
   });
   const seq = last ? Number(last.number.slice(prefix.length + 1)) || 0 : 0;
   return `${prefix}-${String(seq + 1).padStart(3, "0")}`;
-}
-
-async function previousGoals(employeeId: string) {
-  const prev = await prisma.evaluation.findFirst({
-    where: { employeeId, status: "FINALIZED" },
-    orderBy: { finalizedAt: "desc" },
-    include: { goals: { orderBy: { sortOrder: "asc" } } }
-  });
-  return prev?.goals ?? [];
 }
 
 async function loadAdminEvaluation(organizationId: string, id: string, scope: OfficeScope) {
@@ -388,8 +512,9 @@ export const performanceService = {
     const updated = await prisma.$transaction(async (tx) => {
       if (input.scores) {
         for (const s of input.scores) {
+          if (isSystemScored(s)) continue;
           await tx.evaluationScore.updateMany({
-            where: { evaluationId: id, itemKey: s.itemKey, section: { in: SCORED_SECTIONS } },
+            where: { evaluationId: id, itemKey: s.itemKey, section: { in: SCORED_SECTIONS }, scoringSource: "HUMAN" },
             data: { selfScore: s.selfScore ?? null }
           });
         }
@@ -428,11 +553,17 @@ export const performanceService = {
     if (!["OPEN", "SELF_DRAFT"].includes(current.status)) {
       throw new AppError(409, "SELF_LOCKED", "Self-scores are locked after submission");
     }
-    const missing = current.scores.filter((s) => SCORED_SECTIONS.includes(s.section) && s.selfScore == null);
+    const missing = current.scores.filter(
+      (s) => SCORED_SECTIONS.includes(s.section) && !isSystemScored(s) && s.selfScore == null
+    );
     if (missing.length) {
-      throw new AppError(422, "INCOMPLETE_SELF_SCORES", "Score every metric and responsibility item from 1 to 10 before submitting", {
+      throw new AppError(422, "INCOMPLETE_SELF_SCORES", "Score every area from 1 to 5 before submitting. Reliability and Attendance is rated by the system.", {
         missing: missing.map((s) => s.itemKey)
       });
+    }
+    const missingSystem = current.scores.filter((s) => isSystemScored(s) && s.systemScore == null);
+    if (missingSystem.length) {
+      throw new AppError(422, "SYSTEM_SCORE_MISSING", "Attendance rating is not ready yet. Ask an admin to reopen this evaluation.");
     }
     const avgs = computeAverages(current.scores);
     const reviewers = await reviewerUserIds(current.organizationId, current.employee.officeId);
@@ -570,8 +701,9 @@ export const performanceService = {
     const updated = await prisma.$transaction(async (tx) => {
       if (input.scores) {
         for (const s of input.scores) {
+          if (isSystemScored(s)) continue;
           await tx.evaluationScore.updateMany({
-            where: { evaluationId: id, itemKey: s.itemKey, section: { in: SCORED_SECTIONS } },
+            where: { evaluationId: id, itemKey: s.itemKey, section: { in: SCORED_SECTIONS }, scoringSource: "HUMAN" },
             data: {
               evaluatorScore: s.evaluatorScore ?? null,
               evaluatorComment: s.evaluatorComment ?? null
@@ -613,24 +745,28 @@ export const performanceService = {
     if (!["SELF_SUBMITTED", "EVALUATOR_DRAFT"].includes(current.status)) {
       throw new AppError(409, "NOT_READY_FOR_EVALUATOR", "Employee must submit self-scores before evaluator scoring");
     }
-    const missing = current.scores.filter((s) => SCORED_SECTIONS.includes(s.section) && s.evaluatorScore == null);
+    const missing = current.scores.filter(
+      (s) => SCORED_SECTIONS.includes(s.section) && !isSystemScored(s) && s.evaluatorScore == null
+    );
     if (missing.length) {
-      throw new AppError(422, "INCOMPLETE_EVALUATOR_SCORES", "Score every metric and responsibility item from 1 to 10", {
+      throw new AppError(422, "INCOMPLETE_EVALUATOR_SCORES", "Score every area from 1 to 5. Reliability and Attendance is rated by the system.", {
         missing: missing.map((s) => s.itemKey)
       });
     }
     const commentRequired = current.scores.filter((s) => {
-      if (!SCORED_SECTIONS.includes(s.section) || s.evaluatorScore == null) return false;
+      if (!SCORED_SECTIONS.includes(s.section) || isSystemScored(s) || s.evaluatorScore == null) return false;
       const gap = s.selfScore == null ? 0 : Math.abs(s.selfScore - s.evaluatorScore);
-      return (s.evaluatorScore <= 4 || gap >= 3) && !s.evaluatorComment?.trim();
+      const low = s.evaluatorScore <= 2;
+      const wide = gap >= 2;
+      return (low || wide) && !s.evaluatorComment?.trim();
     });
     if (commentRequired.length) {
-      throw new AppError(422, "COMMENT_REQUIRED", "Add a comment when the score is 4 or below, or the gap from self-score is 3 or more", {
+      throw new AppError(422, "COMMENT_REQUIRED", "Add a comment when the score is 2 or below, or the gap from self-score is 2 or more", {
         items: commentRequired.map((s) => s.itemKey)
       });
     }
-    if (!current.focusCompetency?.trim() || !current.actionPlan?.trim()) {
-      throw new AppError(422, "NARRATIVE_REQUIRED", "Focus competency and action plan are required before submitting");
+    if (!current.focusCompetency?.trim()) {
+      throw new AppError(422, "NARRATIVE_REQUIRED", "Key strengths are required before submitting");
     }
     const avgs = computeAverages(current.scores);
     const result = await prisma.$transaction(async (tx) => {
@@ -823,7 +959,7 @@ export const performanceService = {
     };
     const employees = await prisma.employee.findMany({
       where: employeeWhere,
-      select: { id: true, userId: true, firstName: true, lastName: true, jobTitle: true, officeId: true }
+      select: { id: true, userId: true, firstName: true, lastName: true, jobTitle: true, officeId: true, evaluationTemplateId: true }
     });
     if (!employees.length) throw new AppError(422, "NO_EMPLOYEES", "No active employees match this cycle");
 
@@ -840,17 +976,10 @@ export const performanceService = {
       for (const emp of employees) {
         const exists = await tx.evaluation.findUnique({ where: { cycleId_employeeId: { cycleId, employeeId: emp.id } } });
         if (exists) continue;
-        const template = await pickTemplate(organizationId, emp.jobTitle, input.templateId);
+        const template = await pickTemplate(organizationId, emp.jobTitle, input.templateId ?? emp.evaluationTemplateId);
         const snapshot = await periodSnapshot(emp.id, cycle.periodStart, cycle.periodEnd);
-        const prevGoals = await previousGoals(emp.id);
         const number = await nextEvaluationNumber(tx, organizationId, prefix);
         const scoreItems = template.items.filter((i) => SCORED_SECTIONS.includes(i.section));
-        const skillItems = template.items.filter((i) => i.section === "SKILL_IMPROVED" || i.section === "GOAL");
-        const goalLabels = new Map<string, { label: string; sortOrder: number }>();
-        for (const item of skillItems) {
-          const key = item.label.trim().toLowerCase();
-          if (!goalLabels.has(key)) goalLabels.set(key, { label: item.label, sortOrder: item.sortOrder });
-        }
         const evaluation = await tx.evaluation.create({
           data: {
             organizationId,
@@ -859,49 +988,28 @@ export const performanceService = {
             templateId: template.id,
             number,
             status: "OPEN",
-            templateSnapshot: template.items.map((i) => ({ itemKey: i.itemKey, section: i.section, label: i.label, sortOrder: i.sortOrder })),
+            templateSnapshot: template.items.map((i) => ({
+              itemKey: i.itemKey,
+              section: i.section,
+              label: i.label,
+              prompt: i.prompt,
+              scoringSource: i.scoringSource,
+              sortOrder: i.sortOrder
+            })),
             periodSnapshot: snapshot,
             scores: {
               create: scoreItems.map((i) => ({
                 itemKey: i.itemKey,
                 section: i.section,
                 label: i.label,
-                sortOrder: i.sortOrder
+                prompt: i.prompt,
+                scoringSource: i.scoringSource,
+                sortOrder: i.sortOrder,
+                systemScore: i.scoringSource === "SYSTEM_ATTENDANCE" ? snapshot.systemAttendanceScore : null
               }))
             }
           }
         });
-        const goalRows = [...goalLabels.values()].sort((a, b) => a.sortOrder - b.sortOrder);
-        const sourceGoals = prevGoals.length
-          ? prevGoals.map((g, i) => ({
-              skill: g.skill,
-              sortOrder: i,
-              previousSelfScore: g.improvementSelfScore,
-              previousEvaluatorScore: g.improvementEvaluatorScore,
-              targetDate: null as Date | null,
-              criteria: g.criteria
-            }))
-          : goalRows.map((g, i) => ({
-              skill: g.label,
-              sortOrder: i,
-              previousSelfScore: null as number | null,
-              previousEvaluatorScore: null as number | null,
-              targetDate: null as Date | null,
-              criteria: null as string | null
-            }));
-        if (sourceGoals.length) {
-          await tx.evaluationGoal.createMany({
-            data: sourceGoals.map((g) => ({
-              evaluationId: evaluation.id,
-              skill: g.skill,
-              sortOrder: g.sortOrder,
-              previousSelfScore: g.previousSelfScore,
-              previousEvaluatorScore: g.previousEvaluatorScore,
-              targetDate: g.targetDate,
-              criteria: g.criteria
-            }))
-          });
-        }
         createdIds.push(evaluation.id);
         await tx.notification.create({
           data: {
@@ -983,6 +1091,8 @@ export const performanceService = {
         status: serialized.status,
         overallSelf: serialized.overallSelf,
         overallEvaluator: serialized.overallEvaluator,
+        overallBand: serialized.overallBand,
+        overallBandLabel: serialized.overallBandLabel,
         focusCompetency: serialized.focusCompetency ?? "",
         actionPlan: serialized.actionPlan ?? "",
         ...scoreCols,
@@ -994,7 +1104,16 @@ export const performanceService = {
   async listTemplates(organizationId: string) {
     await ensureDefaultTemplate(organizationId);
     return prisma.evaluationTemplate.findMany({
-      where: { organizationId },
+      where: {
+        organizationId,
+        isActive: true,
+        NOT: {
+          OR: [
+            { name: { in: [...LEGACY_EVALUATION_TEMPLATE_NAMES] } },
+            { items: { some: { section: { in: ["RESPONSIBILITY", "SKILL_IMPROVED", "GOAL"] } } } }
+          ]
+        }
+      },
       include: { items: { orderBy: { sortOrder: "asc" } }, _count: { select: { evaluations: true } } },
       orderBy: [{ isDefault: "desc" }, { name: "asc" }]
     });
@@ -1016,9 +1135,19 @@ export const performanceService = {
       description?: string | null;
       jobTitleHint?: string | null;
       isDefault?: boolean;
-      items: Array<{ section: EvaluationItemSection; itemKey?: string; label: string; sortOrder: number }>;
+      items: Array<{
+        section: EvaluationItemSection;
+        itemKey?: string;
+        label: string;
+        prompt?: string | null;
+        scoringSource?: EvaluationScoringSource;
+        sortOrder: number;
+      }>;
     }
   ) {
+    if (LEGACY_EVALUATION_TEMPLATE_NAMES.includes(input.name as (typeof LEGACY_EVALUATION_TEMPLATE_NAMES)[number])) {
+      throw new AppError(400, "LEGACY_TEMPLATE", "The old Software Engineer form has been retired. Use the standard performance evaluation.");
+    }
     if (input.isDefault) {
       await prisma.evaluationTemplate.updateMany({ where: { organizationId, isDefault: true }, data: { isDefault: false } });
     }
@@ -1031,9 +1160,11 @@ export const performanceService = {
         isDefault: input.isDefault ?? false,
         items: {
           create: input.items.map((item, i) => ({
-            section: item.section,
-            itemKey: item.itemKey?.trim() || slugKey(item.section, item.label, i),
+            section: "METRIC" as const,
+            itemKey: item.itemKey?.trim() || slugKey("METRIC", item.label, i),
             label: item.label,
+            prompt: item.prompt ?? null,
+            scoringSource: item.scoringSource ?? (item.itemKey === RELIABILITY_ATTENDANCE_ITEM_KEY ? "SYSTEM_ATTENDANCE" : "HUMAN"),
             sortOrder: item.sortOrder
           }))
         }
@@ -1051,7 +1182,14 @@ export const performanceService = {
       jobTitleHint?: string | null;
       isDefault?: boolean;
       isActive?: boolean;
-      items?: Array<{ section: EvaluationItemSection; itemKey?: string; label: string; sortOrder: number }>;
+      items?: Array<{
+        section: EvaluationItemSection;
+        itemKey?: string;
+        label: string;
+        prompt?: string | null;
+        scoringSource?: EvaluationScoringSource;
+        sortOrder: number;
+      }>;
     }
   ) {
     await this.getTemplate(organizationId, id);
@@ -1064,9 +1202,11 @@ export const performanceService = {
         await tx.evaluationTemplateItem.createMany({
           data: input.items.map((item, i) => ({
             templateId: id,
-            section: item.section,
-            itemKey: item.itemKey?.trim() || slugKey(item.section, item.label, i),
+            section: "METRIC" as const,
+            itemKey: item.itemKey?.trim() || slugKey("METRIC", item.label, i),
             label: item.label,
+            prompt: item.prompt ?? null,
+            scoringSource: item.scoringSource ?? (item.itemKey === RELIABILITY_ATTENDANCE_ITEM_KEY ? "SYSTEM_ATTENDANCE" : "HUMAN"),
             sortOrder: item.sortOrder
           }))
         });

@@ -1,4 +1,3 @@
-import { DateTime } from "luxon";
 import { prisma } from "../../database/prisma.js";
 import { AppError } from "../../shared/errors/app-error.js";
 import { auditJson, type AuditContext } from "../../shared/audit.js";
@@ -6,6 +5,7 @@ import { deliverNotification } from "../notifications/notification.service.js";
 import { emitToOfficeDisplay, emitToOrgAdmins, emitToUser } from "../../realtime/socket.server.js";
 import { ROLE, assertSameOrganization } from "../../shared/tenancy.js";
 import { assertOfficeInScope, employeeOfficeFilter, type OfficeScope } from "../../shared/office-scope.js";
+import { leaveDaysBetween } from "../../shared/schedule-day-fraction.js";
 
 async function employeeContext(userId: string) {
   const e = await prisma.employee.findUnique({
@@ -16,28 +16,23 @@ async function employeeContext(userId: string) {
   if (!e.schedule) throw new AppError(400, "SCHEDULE_NOT_ASSIGNED", "A work schedule is required");
   return e;
 }
-function localDate(d: Date, zone: string) {
-  return DateTime.fromJSDate(d, { zone: "utc" }).setZone(zone, { keepLocalTime: true }).startOf("day");
-}
-function scheduleWorkingWeekdays(schedule: NonNullable<Awaited<ReturnType<typeof employeeContext>>["schedule"]>) {
-  if (schedule.days.length > 0) return schedule.days.map((d) => d.weekday);
-  return schedule.workingDays;
-}
-function workingDaysBetween(start: Date, end: Date, zone: string, workingDays: number[]) {
-  let cur = localDate(start, zone),
-    stop = localDate(end, zone);
-  if (stop < cur) throw new AppError(422, "INVALID_LEAVE_RANGE", "End date cannot be before start date");
-  let count = 0;
-  while (cur <= stop) {
-    if (workingDays.includes(cur.weekday)) count++;
-    cur = cur.plus({ days: 1 });
-  }
-  return count;
-}
 function dateBounds(start: Date, end: Date) {
   const s = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate()));
   const e = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate()));
   return { s, e };
+}
+
+/** Past leave is allowed for missing days; block only if attendance already exists in range. */
+async function assertNoAttendanceInRange(employeeId: string, start: Date, end: Date) {
+  const attendance = await prisma.timesheet.findFirst({
+    where: { employeeId, workDate: { gte: start, lte: end } },
+    select: { id: true, workDate: true }
+  });
+  if (attendance) {
+    throw new AppError(409, "LEAVE_ATTENDANCE_CONFLICT", "Attendance already exists within the requested leave dates", {
+      workDate: attendance.workDate
+    });
+  }
 }
 async function orgAdminUserIds(organizationId: string) {
   const users = await prisma.user.findMany({
@@ -63,12 +58,10 @@ export const leaveService = {
     }
     const zone = e.office?.timezone ?? e.schedule!.timezone;
     const { s, e: ed } = dateBounds(input.startDate, input.endDate);
-    const today = DateTime.now().setZone(zone).startOf("day");
-    if (DateTime.fromJSDate(s, { zone: "utc" }) < today.toUTC().startOf("day")) {
-      throw new AppError(422, "PAST_LEAVE_NOT_ALLOWED", "Leave cannot start in the past");
-    }
-    const numberOfDays = workingDaysBetween(s, ed, zone, scheduleWorkingWeekdays(e.schedule!));
+    if (ed < s) throw new AppError(422, "INVALID_LEAVE_RANGE", "End date cannot be before start date");
+    const numberOfDays = leaveDaysBetween(s, ed, zone, e.schedule!);
     if (numberOfDays <= 0) throw new AppError(422, "NO_WORKING_DAYS", "Selected leave range contains no scheduled working days");
+    await assertNoAttendanceInRange(e.id, s, ed);
     const overlap = await prisma.leaveRequest.findFirst({
       where: { employeeId: e.id, status: { in: ["PENDING", "APPROVED"] }, startDate: { lte: ed }, endDate: { gte: s } }
     });
@@ -197,7 +190,7 @@ export const leaveService = {
               employeeCode: true,
               firstName: true,
               lastName: true,
-              department: true,
+              department: { select: { name: true } },
               officeId: true,
               office: { select: { id: true, name: true } }
             }
@@ -246,10 +239,7 @@ export const leaveService = {
     if (current.status !== "PENDING") throw new AppError(409, "LEAVE_ALREADY_DECIDED", "Only pending leave can be decided");
     if (decision === "REJECTED" && !reason) throw new AppError(422, "REJECTION_REASON_REQUIRED", "Rejection reason is required");
     if (decision === "APPROVED") {
-      const attendance = await prisma.timesheet.findFirst({
-        where: { employeeId: current.employeeId, workDate: { gte: current.startDate, lte: current.endDate } }
-      });
-      if (attendance) throw new AppError(409, "LEAVE_ATTENDANCE_CONFLICT", "Attendance already exists within the requested leave dates");
+      await assertNoAttendanceInRange(current.employeeId, current.startDate, current.endDate);
     }
     const result = await prisma.$transaction(async (tx) => {
       const updated = await tx.leaveRequest.update({ where: { id }, data: { status: decision } });

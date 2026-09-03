@@ -1,6 +1,8 @@
 import { Router } from "express";
-import { authenticate, requireNormalSession, requireOrgContext, requirePermission } from "../../middleware/authenticate.js";
+import { authenticate, requireNormalSession, requireOrgAdmin, requireOrgContext, requirePermission } from "../../middleware/authenticate.js";
 import { validate } from "../../shared/validate.js";
+import { adminAttendanceConfig, updateAdminAttendanceConfig } from "../attendance/attendance.controller.js";
+import { attendanceConfigUpdateSchema } from "../attendance/attendance.schemas.js";
 import {
   adminTimesheet,
   adminTimesheets,
@@ -54,6 +56,8 @@ adminTimesheetRouter.post("/:id/correct", requirePermission("attendance.correct"
 
 export const adminAttendanceRosterRouter = Router();
 adminAttendanceRosterRouter.use(authenticate, requireNormalSession, requireOrgContext);
+adminAttendanceRosterRouter.get("/config", requirePermission("attendance.view_all"), adminAttendanceConfig);
+adminAttendanceRosterRouter.patch("/config", requireOrgAdmin, requirePermission("attendance.view_all"), validate(attendanceConfigUpdateSchema), updateAdminAttendanceConfig);
 adminAttendanceRosterRouter.get("/day-roster", requirePermission("attendance.view_all"), validate(dayRosterSchema), attendanceDayRoster);
 adminAttendanceRosterRouter.get("/month-summary", requirePermission("attendance.view_all"), validate(monthSummarySchema), attendanceMonthSummary);
 

@@ -6,6 +6,13 @@ const accessKey = new TextEncoder().encode(env.JWT_ACCESS_SECRET);
 const refreshKey = new TextEncoder().encode(env.JWT_REFRESH_SECRET);
 export const hashToken = (value: string) => createHash("sha256").update(value).digest("hex");
 
+export type ActiveContextClaims = {
+  key: string;
+  type: "platform" | "org_admin" | "office_admin" | "employee";
+  organizationId: string | null;
+  officeIds: string[];
+};
+
 export type AccessTokenClaims = {
   userId: string;
   roles: string[];
@@ -13,6 +20,7 @@ export type AccessTokenClaims = {
   restricted: boolean;
   organizationId: string | null;
   officeIds: string[];
+  activeContext?: ActiveContextClaims;
   typ?: "access" | "display";
   boardMode?: "ROOMS" | "PEOPLE" | "BOTH";
 };
@@ -26,6 +34,7 @@ export async function signAccessToken(input: AccessTokenClaims) {
     restricted: input.restricted,
     organizationId: input.organizationId,
     officeIds: input.officeIds,
+    ...(input.activeContext ? { activeContext: input.activeContext } : {}),
     ...(input.boardMode ? { boardMode: input.boardMode } : {})
   })
     .setProtectedHeader({ alg: "HS256" }).setSubject(input.userId).setIssuer(env.JWT_ISSUER).setAudience(env.JWT_AUDIENCE)
@@ -50,9 +59,31 @@ export async function signDisplayAccessToken(input: {
   });
 }
 
-export async function signRefreshToken(userId: string) {
-  return new SignJWT({ type: "refresh" }).setProtectedHeader({ alg: "HS256" }).setSubject(userId)
-    .setIssuer(env.JWT_ISSUER).setAudience(env.JWT_AUDIENCE).setJti(randomUUID()).setIssuedAt().setExpirationTime(`${env.REFRESH_TOKEN_TTL_DAYS}d`).sign(refreshKey);
+export async function signRefreshToken(userId: string, activeContextKey?: string) {
+  return new SignJWT({
+    type: "refresh",
+    ...(activeContextKey ? { activeContextKey } : {})
+  })
+    .setProtectedHeader({ alg: "HS256" })
+    .setSubject(userId)
+    .setIssuer(env.JWT_ISSUER)
+    .setAudience(env.JWT_AUDIENCE)
+    .setJti(randomUUID())
+    .setIssuedAt()
+    .setExpirationTime(`${env.REFRESH_TOKEN_TTL_DAYS}d`)
+    .sign(refreshKey);
+}
+
+export async function signPreAuthToken(userId: string) {
+  return new SignJWT({ type: "pre_auth" })
+    .setProtectedHeader({ alg: "HS256" })
+    .setSubject(userId)
+    .setIssuer(env.JWT_ISSUER)
+    .setAudience(env.JWT_AUDIENCE)
+    .setJti(randomUUID())
+    .setIssuedAt()
+    .setExpirationTime("5m")
+    .sign(accessKey);
 }
 
 export async function signDisplayRefreshToken(displayId: string) {
@@ -64,6 +95,7 @@ export async function verifyAccessToken(token: string): Promise<AccessTokenClaim
   const { payload } = await jwtVerify(token, accessKey, { issuer: env.JWT_ISSUER, audience: env.JWT_AUDIENCE });
   if (payload.tokenUse === "vault" || payload.typ === "vault") throw new Error("Vault token is not an access token");
   const typ = payload.tokenUse === "display" || payload.typ === "display" ? "display" : "access";
+  const activeContextRaw = payload.activeContext as ActiveContextClaims | undefined;
   return {
     userId: payload.sub!,
     roles: (payload.roles as string[]) ?? [],
@@ -71,6 +103,14 @@ export async function verifyAccessToken(token: string): Promise<AccessTokenClaim
     restricted: Boolean(payload.restricted),
     organizationId: (payload.organizationId as string | null | undefined) ?? null,
     officeIds: (payload.officeIds as string[] | undefined) ?? [],
+    activeContext: activeContextRaw
+      ? {
+          key: activeContextRaw.key,
+          type: activeContextRaw.type,
+          organizationId: activeContextRaw.organizationId ?? null,
+          officeIds: activeContextRaw.officeIds ?? []
+        }
+      : undefined,
     typ,
     boardMode: payload.boardMode as AccessTokenClaims["boardMode"]
   };
@@ -79,6 +119,15 @@ export async function verifyAccessToken(token: string): Promise<AccessTokenClaim
 export async function verifyRefreshToken(token: string) {
   const { payload } = await jwtVerify(token, refreshKey, { issuer: env.JWT_ISSUER, audience: env.JWT_AUDIENCE });
   if (payload.type !== "refresh" || !payload.sub) throw new Error("Invalid refresh token");
+  return {
+    userId: payload.sub,
+    activeContextKey: payload.activeContextKey as string | undefined
+  };
+}
+
+export async function verifyPreAuthToken(token: string) {
+  const { payload } = await jwtVerify(token, accessKey, { issuer: env.JWT_ISSUER, audience: env.JWT_AUDIENCE });
+  if (payload.type !== "pre_auth" || !payload.sub) throw new Error("Invalid pre-auth token");
   return { userId: payload.sub };
 }
 

@@ -6,6 +6,17 @@ import { recordManifest, upsertUserWithRole } from "./user.js";
 
 export type EmployeeMap = Map<string, { id: string; userId: string; officeId: string; scheduleId: string }>;
 
+async function ensureDepartment(prisma: PrismaClient, organizationId: string, name?: string) {
+  if (!name?.trim()) return null;
+  const trimmed = name.trim();
+  const existing = await prisma.department.findUnique({
+    where: { organizationId_name: { organizationId, name: trimmed } }
+  });
+  if (existing) return existing.id;
+  const created = await prisma.department.create({ data: { organizationId, name: trimmed } });
+  return created.id;
+}
+
 export async function seedOrgAdmin(
   prisma: PrismaClient,
   roleIds: RoleIds,
@@ -61,6 +72,8 @@ export async function seedEmployees(
       organizationId
     });
 
+    const departmentId = await ensureDepartment(prisma, organizationId, e.department);
+
     const existing = await prisma.employee.findUnique({
       where: { organizationId_employeeCode: { organizationId, employeeCode: e.code } }
     });
@@ -76,7 +89,7 @@ export async function seedEmployees(
             lastName: e.lastName,
             phone: e.phone,
             jobTitle: e.jobTitle,
-            department: e.department,
+            departmentId,
             status: "ACTIVE"
           }
         })
@@ -92,7 +105,7 @@ export async function seedEmployees(
             lastName: e.lastName,
             phone: e.phone,
             jobTitle: e.jobTitle,
-            department: e.department,
+            departmentId,
             employmentStartDate: startDate,
             status: "ACTIVE"
           }

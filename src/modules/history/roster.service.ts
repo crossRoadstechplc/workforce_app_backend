@@ -3,10 +3,14 @@ import { prisma } from "../../database/prisma.js";
 import { AppError } from "../../shared/errors/app-error.js";
 import { employeeOfficeFilter, type OfficeScope } from "../../shared/office-scope.js";
 import { formatWorkDateKey } from "../../shared/work-date.js";
+import { leaveFractionForWeekday } from "../../shared/schedule-day-fraction.js";
+import { attendanceCorrectnessService } from "../attendance-correctness/attendance-correctness.service.js";
 
 type ScheduleInfo = {
   workingDays: number[];
-  days: { weekday: number }[];
+  checkInTime?: string;
+  checkOutTime?: string;
+  days: { weekday: number; checkInTime?: string; checkOutTime?: string }[];
   timezone: string;
 };
 
@@ -49,7 +53,7 @@ function person(e: {
   employeeCode: string;
   firstName: string;
   lastName: string;
-  department: string | null;
+  department?: { name: string } | null;
   officeId: string | null;
   office?: { id: string; name: string } | null;
 }) {
@@ -58,7 +62,7 @@ function person(e: {
     employeeCode: e.employeeCode,
     firstName: e.firstName,
     lastName: e.lastName,
-    department: e.department,
+    department: e.department?.name ?? null,
     officeId: e.officeId,
     office: e.office ? { id: e.office.id, name: e.office.name } : null
   };
@@ -77,7 +81,7 @@ function deriveAttendanceState(input: {
 }) {
   if (input.timesheet) {
     if (input.timesheet.isMissingCheckout || (input.timesheet.isOpen && !input.timesheet.actualCheckOut)) {
-      return "MISSING_CHECKOUT";
+      return input.timesheet.isLate ? "PRESENT_LATE" : "PRESENT_ON_TIME";
     }
     return input.timesheet.status;
   }
@@ -101,7 +105,8 @@ export const rosterService = {
       where: employeeWhere(organizationId, scope, input.officeId),
       include: {
         office: { select: { id: true, name: true } },
-        schedule: { include: { days: { select: { weekday: true } } } }
+        department: { select: { name: true } },
+        schedule: { include: { days: { select: { weekday: true, checkInTime: true, checkOutTime: true } } } }
       },
       orderBy: [{ lastName: "asc" }, { firstName: "asc" }]
     });
@@ -123,7 +128,14 @@ export const rosterService = {
           startDate: { lte: start },
           endDate: { gte: start }
         },
-        select: { employeeId: true, id: true, leaveTypeId: true, startDate: true, endDate: true }
+        select: {
+          employeeId: true,
+          id: true,
+          leaveTypeId: true,
+          startDate: true,
+          endDate: true,
+          leaveType: { select: { id: true, name: true } }
+        }
       }),
       prisma.worksheet.findMany({
         where: { employeeId: { in: employeeIds }, workDate: { gte: start, lt: end } },
@@ -134,6 +146,7 @@ export const rosterService = {
     const timesheetByEmployee = new Map(timesheets.map((t) => [t.employeeId, t]));
     const leaveByEmployee = new Map(approvedLeaves.map((l) => [l.employeeId, l]));
     const worksheetByEmployee = new Map(worksheets.map((w) => [w.employeeId, w]));
+    const correctnessByEmployee = await attendanceCorrectnessService.mapForEmployees(employeeIds, start);
 
     const items = employees.map((e) => {
       const timesheet = timesheetByEmployee.get(e.id) ?? null;
@@ -150,6 +163,8 @@ export const rosterService = {
         employee: person(e),
         office: e.office ? { id: e.office.id, name: e.office.name } : null,
         attendanceState,
+        correctnessStatus: correctnessByEmployee.get(e.id)?.status ?? null,
+        correctnessRequestId: correctnessByEmployee.get(e.id)?.id ?? null,
         isWorkingDay: workingDay,
         timesheet: timesheet
           ? {
@@ -170,8 +185,11 @@ export const rosterService = {
         leave: leave
           ? {
               id: leave.id,
+              status: "APPROVED" as const,
+              label: "Approved leave",
               startDate: leave.startDate,
-              endDate: leave.endDate
+              endDate: leave.endDate,
+              leaveType: leave.leaveType
             }
           : null,
         worksheet: worksheet
@@ -183,7 +201,13 @@ export const rosterService = {
       };
     });
 
-    const filtered = input.status ? items.filter((row) => row.attendanceState === input.status) : items;
+    const filtered = input.status
+      ? items.filter((row) =>
+          input.status!.startsWith("CORRECTNESS_")
+            ? row.correctnessStatus === input.status!.replace("CORRECTNESS_", "")
+            : row.attendanceState === input.status
+        )
+      : items;
 
     const counts = {
       totalEmployees: items.length,
@@ -192,7 +216,7 @@ export const rosterService = {
       late: items.filter((r) => r.timesheet?.isLate).length,
       onLeave: items.filter((r) => r.attendanceState === "ON_LEAVE").length,
       notCheckedIn: items.filter((r) => r.attendanceState === "NOT_CHECKED_IN").length,
-      missingCheckout: items.filter((r) => r.attendanceState === "MISSING_CHECKOUT").length,
+      correctnessPending: items.filter((r) => r.correctnessStatus === "PENDING").length,
       worksheetsSubmitted: items.filter((r) => !!r.worksheet).length,
       nonWorkingDay: items.filter((r) => r.attendanceState === "NON_WORKING_DAY").length
     };
@@ -215,7 +239,8 @@ export const rosterService = {
       where: employeeWhere(organizationId, scope, input.officeId),
       include: {
         office: { select: { id: true, name: true } },
-        schedule: { include: { days: { select: { weekday: true } } } }
+        department: { select: { name: true } },
+        schedule: { include: { days: { select: { weekday: true, checkInTime: true, checkOutTime: true } } } }
       },
       orderBy: [{ lastName: "asc" }, { firstName: "asc" }]
     });
@@ -285,7 +310,19 @@ export const rosterService = {
           return d >= s && d <= en;
         });
         if (onLeave) {
-          leaveDays += 1;
+          leaveDays += leaveFractionForWeekday(
+            {
+              workingDays: e.schedule?.workingDays ?? [],
+              checkInTime: e.schedule?.checkInTime,
+              checkOutTime: e.schedule?.checkOutTime,
+              days: (e.schedule?.days ?? []).map((day) => ({
+                weekday: day.weekday,
+                checkInTime: day.checkInTime ?? e.schedule?.checkInTime ?? "08:30",
+                checkOutTime: day.checkOutTime ?? e.schedule?.checkOutTime ?? "17:30"
+              }))
+            },
+            weekday
+          );
           continue;
         }
 
@@ -307,7 +344,7 @@ export const rosterService = {
         office: e.office ? { id: e.office.id, name: e.office.name } : null,
         workingDays,
         presentDays,
-        leaveDays,
+        leaveDays: Math.round(leaveDays * 100) / 100,
         lateDays,
         missingCheckInDays,
         missingCheckOutDays

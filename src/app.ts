@@ -10,7 +10,12 @@ import { authRouter } from "./modules/auth/auth.routes.js";
 import { employeeAdminRouter } from "./modules/employees/employee.routes.js";
 import { officeAdminRouter } from "./modules/offices/office.routes.js";
 import { scheduleAdminRouter } from "./modules/schedules/schedule.routes.js";
+import { departmentAdminRouter } from "./modules/departments/department.routes.js";
 import { attendanceRouter } from "./modules/attendance/attendance.routes.js";
+import {
+  adminAttendanceCorrectnessRouter,
+  attendanceCorrectnessRouter
+} from "./modules/attendance-correctness/attendance-correctness.routes.js";
 import {
   timesheetHistoryRouter,
   worksheetHistoryRouter,
@@ -58,7 +63,9 @@ app.use("/api/v1/admin/context", tenantContextRouter);
 app.use("/api/v1/admin/employees", employeeAdminRouter);
 app.use("/api/v1/admin/offices", officeAdminRouter);
 app.use("/api/v1/admin/schedules", scheduleAdminRouter);
+app.use("/api/v1/admin/departments", departmentAdminRouter);
 app.use("/api/v1/attendance", attendanceRouter);
+app.use("/api/v1/attendance/correctness-requests", attendanceCorrectnessRouter);
 app.use("/api/v1/timesheets", timesheetHistoryRouter);
 app.use("/api/v1/worksheets", worksheetHistoryRouter);
 app.use("/api/v1/leave-requests", leaveRouter);
@@ -69,6 +76,7 @@ app.use("/api/v1/notifications", notificationRouter);
 app.use("/api/v1/chat", chatRouter);
 app.use("/api/v1/admin/timesheets", adminTimesheetRouter);
 app.use("/api/v1/admin/attendance", adminAttendanceRosterRouter);
+app.use("/api/v1/admin/attendance/correctness-requests", adminAttendanceCorrectnessRouter);
 app.use("/api/v1/admin/worksheets", adminWorksheetRouter);
 app.use("/api/v1/admin/leave", adminLeaveRosterRouter);
 app.use("/api/v1/admin/leave-requests", adminLeaveRouter);

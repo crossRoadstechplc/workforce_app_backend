@@ -1,5 +1,7 @@
 import { prisma } from "../../database/prisma.js";
 import { getOfficeScope, type OfficeScope } from "../../shared/office-scope.js";
+import { ensureDefaultTemplate } from "../performance/performance.service.js";
+import { LEGACY_EVALUATION_TEMPLATE_NAMES } from "../performance/default-template.js";
 
 export const tenantContextService = {
   async get(organizationId: string, scope: OfficeScope) {
@@ -28,6 +30,26 @@ export const tenantContextService = {
       },
       orderBy: { name: "asc" }
     });
-    return { offices, schedules, scope: scope.allOffices ? "organization" as const : "office" as const };
+    const departments = await prisma.department.findMany({
+      where: { organizationId, isActive: true },
+      select: { id: true, name: true },
+      orderBy: { name: "asc" }
+    });
+    await ensureDefaultTemplate(organizationId);
+    const evaluationTemplates = await prisma.evaluationTemplate.findMany({
+      where: {
+        organizationId,
+        isActive: true,
+        NOT: {
+          OR: [
+            { name: { in: [...LEGACY_EVALUATION_TEMPLATE_NAMES] } },
+            { items: { some: { section: { in: ["RESPONSIBILITY", "SKILL_IMPROVED", "GOAL"] } } } }
+          ]
+        }
+      },
+      select: { id: true, name: true, jobTitleHint: true, isDefault: true },
+      orderBy: [{ isDefault: "desc" }, { name: "asc" }]
+    });
+    return { offices, schedules, departments, evaluationTemplates, scope: scope.allOffices ? "organization" as const : "office" as const };
   }
 };

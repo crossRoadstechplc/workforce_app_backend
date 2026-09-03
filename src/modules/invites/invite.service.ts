@@ -246,7 +246,8 @@ export const inviteService = {
     lastName: string;
     phone?: string | null;
     jobTitle?: string | null;
-    department?: string | null;
+    departmentId?: string | null;
+    evaluationTemplateId?: string | null;
     employmentStartDate: Date;
     employeeCode?: string;
     officeId?: string | null;
@@ -265,7 +266,8 @@ export const inviteService = {
     const payload = (invite.payload ?? {}) as {
       employmentStartDate?: string;
       jobTitle?: string | null;
-      department?: string | null;
+      departmentId?: string | null;
+      evaluationTemplateId?: string | null;
     };
     const officeId = invite.officeId ?? input.officeId ?? null;
     const scheduleId = invite.scheduleId ?? input.scheduleId ?? null;
@@ -286,7 +288,8 @@ export const inviteService = {
         lastName: input.lastName,
         phone: input.phone,
         jobTitle: input.jobTitle ?? payload.jobTitle,
-        department: input.department ?? payload.department,
+        departmentId: input.departmentId ?? payload.departmentId,
+        evaluationTemplateId: input.evaluationTemplateId ?? payload.evaluationTemplateId,
         employmentStartDate: input.employmentStartDate,
         officeId,
         scheduleId,
@@ -319,7 +322,8 @@ export const inviteService = {
       scheduleId?: string | null;
       employmentStartDate?: Date;
       jobTitle?: string | null;
-      department?: string | null;
+      departmentId?: string | null;
+      evaluationTemplateId?: string | null;
     },
     audit: AuditContext,
     scope: OfficeScope
@@ -337,6 +341,18 @@ export const inviteService = {
         throw new AppError(400, "INVALID_SCHEDULE", "Schedule does not exist or is inactive");
       }
     }
+    if (input.departmentId) {
+      const department = await prisma.department.findUnique({ where: { id: input.departmentId } });
+      if (!department || !department.isActive || department.organizationId !== organizationId) {
+        throw new AppError(400, "INVALID_DEPARTMENT", "Department does not exist or is inactive");
+      }
+    }
+    if (input.evaluationTemplateId) {
+      const template = await prisma.evaluationTemplate.findUnique({ where: { id: input.evaluationTemplateId } });
+      if (!template || !template.isActive || template.organizationId !== organizationId) {
+        throw new AppError(400, "INVALID_EVALUATION_TEMPLATE", "Evaluation template does not exist or is inactive");
+      }
+    }
 
     const { invite, token } = await prisma.$transaction((tx) =>
       createInviteInTx(tx, {
@@ -349,7 +365,8 @@ export const inviteService = {
         payload: {
           ...(input.employmentStartDate ? { employmentStartDate: input.employmentStartDate.toISOString().slice(0, 10) } : {}),
           ...(input.jobTitle ? { jobTitle: input.jobTitle } : {}),
-          ...(input.department ? { department: input.department } : {})
+          ...(input.departmentId ? { departmentId: input.departmentId } : {}),
+          ...(input.evaluationTemplateId ? { evaluationTemplateId: input.evaluationTemplateId } : {})
         }
       })
     );

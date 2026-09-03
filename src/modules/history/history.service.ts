@@ -7,6 +7,7 @@ import { emitToOrgAdmins, emitToUser } from "../../realtime/socket.server.js";
 import { assertSameOrganization } from "../../shared/tenancy.js";
 import { assertOfficeInScope, employeeOfficeFilter, type OfficeScope } from "../../shared/office-scope.js";
 import { formatWorkDateKey, mapFormattedWorkDates, withFormattedWorkDate } from "../../shared/work-date.js";
+import { attendanceCorrectnessService } from "../attendance-correctness/attendance-correctness.service.js";
 
 async function employeeForUser(userId: string) {
   const e = await prisma.employee.findUnique({ where: { userId } });
@@ -47,24 +48,29 @@ export const historyService = {
     const e = await employeeForUser(userId);
     const start = new Date(Date.UTC(year, month - 1, 1));
     const end = new Date(Date.UTC(year, month, 1));
-    return mapFormattedWorkDates(
-      await prisma.timesheet.findMany({
-      where: { employeeId: e.id, workDate: { gte: start, lt: end } },
-      orderBy: { workDate: "asc" },
-      select: {
-        id: true,
-        workDate: true,
-        status: true,
-        actualCheckIn: true,
-        actualCheckOut: true,
-        workedMinutes: true,
-        isLate: true,
-        isEarlyCheckout: true,
-        isMissingCheckout: true,
-        worksheet: { select: { id: true } }
-      }
-    })
-    );
+    const [items, correctnessMap] = await Promise.all([
+      prisma.timesheet.findMany({
+        where: { employeeId: e.id, workDate: { gte: start, lt: end } },
+        orderBy: { workDate: "asc" },
+        select: {
+          id: true,
+          workDate: true,
+          status: true,
+          actualCheckIn: true,
+          actualCheckOut: true,
+          workedMinutes: true,
+          isLate: true,
+          isEarlyCheckout: true,
+          isMissingCheckout: true,
+          worksheet: { select: { id: true } }
+        }
+      }),
+      attendanceCorrectnessService.mapForEmployeeRange(e.id, start, end)
+    ]);
+    return mapFormattedWorkDates(items).map((row) => ({
+      ...row,
+      correctnessStatus: correctnessMap.get(row.workDate as string) ?? null
+    }));
   },
   async myWorksheets(userId: string, input: any) {
     const e = await employeeForUser(userId);

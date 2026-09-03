@@ -10,8 +10,17 @@ async function employeeIdForUser(userId: string) {
 }
 
 export const attendancePhotoService = {
-  isRequired() {
+  isGloballyEnabled() {
     return env.ATTENDANCE_PHOTO_REQUIRED && isCloudinaryConfigured();
+  },
+
+  async isRequiredForOrganization(organizationId: string) {
+    if (!attendancePhotoService.isGloballyEnabled()) return false;
+    const org = await prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: { attendancePhotoRequired: true }
+    });
+    return org?.attendancePhotoRequired ?? true;
   },
 
   async upload(
@@ -28,8 +37,9 @@ export const attendancePhotoService = {
     return uploaded;
   },
 
-  validatePhotoUrl(photoUrl?: string) {
-    if (!attendancePhotoService.isRequired()) return;
+  async validatePhotoUrl(organizationId: string, photoUrl?: string) {
+    const required = await attendancePhotoService.isRequiredForOrganization(organizationId);
+    if (!required) return;
     if (!photoUrl?.trim()) {
       throw new AppError(422, "PHOTO_REQUIRED", "A verification photo is required for this action");
     }

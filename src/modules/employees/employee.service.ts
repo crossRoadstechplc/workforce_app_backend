@@ -31,6 +31,8 @@ const employeeInclude = {
   user: { select: { id: true, email: true, status: true, mustChangePassword: true, lastLoginAt: true } },
   office: true,
   schedule: { include: { days: { orderBy: { weekday: "asc" as const } } } },
+  department: { select: { id: true, name: true, isActive: true } },
+  evaluationTemplate: { select: { id: true, name: true, isActive: true } },
   supervisor: { select: supervisorSelect }
 } as const;
 
@@ -46,7 +48,8 @@ type CreateEmployeeInput = {
   lastName: string;
   phone?: string | null;
   jobTitle?: string | null;
-  department?: string | null;
+  departmentId?: string | null;
+  evaluationTemplateId?: string | null;
   employmentStartDate: Date;
   officeId?: string | null;
   scheduleId?: string | null;
@@ -62,31 +65,72 @@ type ListInput = {
   status?: "ACTIVE" | "INACTIVE" | "TERMINATED";
   officeId?: string;
   scheduleId?: string;
-  department?: string;
+  departmentId?: string;
 };
 
-async function validateAssignments(organizationId: string, officeId?: string | null, scheduleId?: string | null) {
-  const [office, schedule] = await Promise.all([
-    officeId ? prisma.office.findUnique({ where: { id: officeId } }) : null,
-    scheduleId ? prisma.workSchedule.findUnique({ where: { id: scheduleId } }) : null
+async function validateAssignments(
+  organizationId: string,
+  input: { officeId?: string | null; scheduleId?: string | null; departmentId?: string | null; evaluationTemplateId?: string | null }
+) {
+  const [office, schedule, department, evaluationTemplate] = await Promise.all([
+    input.officeId ? prisma.office.findUnique({ where: { id: input.officeId } }) : null,
+    input.scheduleId ? prisma.workSchedule.findUnique({ where: { id: input.scheduleId } }) : null,
+    input.departmentId ? prisma.department.findUnique({ where: { id: input.departmentId } }) : null,
+    input.evaluationTemplateId ? prisma.evaluationTemplate.findUnique({ where: { id: input.evaluationTemplateId } }) : null
   ]);
-  if (officeId && (!office || !office.isActive || office.organizationId !== organizationId)) {
+  if (input.officeId && (!office || !office.isActive || office.organizationId !== organizationId)) {
     throw new AppError(400, "INVALID_OFFICE", "Office does not exist or is inactive");
   }
-  if (scheduleId && (!schedule || !schedule.isActive || schedule.organizationId !== organizationId)) {
+  if (input.scheduleId && (!schedule || !schedule.isActive || schedule.organizationId !== organizationId)) {
     throw new AppError(400, "INVALID_SCHEDULE", "Schedule does not exist or is inactive");
   }
+  if (input.departmentId && (!department || !department.isActive || department.organizationId !== organizationId)) {
+    throw new AppError(400, "INVALID_DEPARTMENT", "Department does not exist or is inactive");
+  }
+  if (input.evaluationTemplateId && (!evaluationTemplate || !evaluationTemplate.isActive || evaluationTemplate.organizationId !== organizationId)) {
+    throw new AppError(400, "INVALID_EVALUATION_TEMPLATE", "Evaluation template does not exist or is inactive");
+  }
+}
+
+const TX_OPTIONS = { timeout: 15_000, maxWait: 5_000 } as const;
+
+async function resolveEmployeeCode(organizationId: string, provided?: string) {
+  if (provided) return provided;
+  return prisma.$transaction((tx) => generateEmployeeCode(tx, organizationId), TX_OPTIONS);
 }
 
 export const employeeService = {
   async create(organizationId: string, input: CreateEmployeeInput, audit: AuditContext, scope: OfficeScope) {
     assertOfficeInScope(scope, input.officeId ?? undefined, "You can only assign employees to offices you manage");
-    await validateAssignments(organizationId, input.officeId, input.scheduleId);
+    await validateAssignments(organizationId, {
+      officeId: input.officeId,
+      scheduleId: input.scheduleId,
+      departmentId: input.departmentId,
+      evaluationTemplateId: input.evaluationTemplateId
+    });
     await validateSupervisor(organizationId, null, input.supervisorId);
 
+    const normalizedEmail = normalizeEmail(input.email);
+    const employeeCode = await resolveEmployeeCode(organizationId, input.employeeCode);
+    const existingPreview = await findUserByEmail(normalizedEmail);
+
+    let preparedPassword: { hash: string; temporaryPassword: string } | undefined;
+    if (existingPreview) {
+      if (input.temporaryPassword) {
+        preparedPassword = {
+          temporaryPassword: input.temporaryPassword,
+          hash: await argon2.hash(input.temporaryPassword, { type: argon2.argon2id })
+        };
+      }
+    } else {
+      const temporaryPassword = input.temporaryPassword ?? generateMemorableTemporaryPassword(employeeCode);
+      preparedPassword = {
+        temporaryPassword,
+        hash: await argon2.hash(temporaryPassword, { type: argon2.argon2id })
+      };
+    }
+
     const created = await prisma.$transaction(async (tx) => {
-      const employeeCode = input.employeeCode ?? (await generateEmployeeCode(tx, organizationId));
-      const normalizedEmail = normalizeEmail(input.email);
       const existing = await findUserByEmail(normalizedEmail, tx);
 
       if (existing) {
@@ -105,21 +149,20 @@ export const employeeService = {
             lastName: input.lastName,
             phone: input.phone,
             jobTitle: input.jobTitle,
-            department: input.department,
+            departmentId: input.departmentId,
+            evaluationTemplateId: input.evaluationTemplateId,
             employmentStartDate: input.employmentStartDate,
             officeId: input.officeId,
             scheduleId: input.scheduleId,
             supervisorId: input.supervisorId
-          },
-          include: employeeInclude
+          }
         });
 
-        if (input.temporaryPassword) {
-          const passwordHash = await argon2.hash(input.temporaryPassword, { type: argon2.argon2id });
+        if (preparedPassword) {
           await tx.user.update({
             where: { id: existing.id },
             data: {
-              passwordHash,
+              passwordHash: preparedPassword.hash,
               ...(input.mustChangePassword !== undefined ? { mustChangePassword: input.mustChangePassword } : {})
             }
           });
@@ -146,22 +189,20 @@ export const employeeService = {
         });
 
         return {
-          employee: withSupervisorAccess(employee),
-          temporaryPassword: input.temporaryPassword,
+          employeeId: employee.id,
+          temporaryPassword: preparedPassword?.temporaryPassword,
           existingAccount: true as const
         };
       }
 
       const employeeRole = await tx.role.findUnique({ where: { name: "EMPLOYEE" } });
       if (!employeeRole) throw new AppError(500, "ROLE_NOT_CONFIGURED", "EMPLOYEE role is not configured");
-
-      const temporaryPassword = input.temporaryPassword ?? generateMemorableTemporaryPassword(employeeCode);
-      const passwordHash = await argon2.hash(temporaryPassword, { type: argon2.argon2id });
+      if (!preparedPassword) throw new AppError(500, "PASSWORD_NOT_PREPARED", "Temporary password was not prepared");
 
       const user = await tx.user.create({
         data: {
           email: normalizedEmail,
-          passwordHash,
+          passwordHash: preparedPassword.hash,
           mustChangePassword: input.mustChangePassword ?? true,
           userRoles: { create: { roleId: employeeRole.id } },
           memberships: { create: { organizationId } },
@@ -174,7 +215,8 @@ export const employeeService = {
               lastName: input.lastName,
               phone: input.phone,
               jobTitle: input.jobTitle,
-              department: input.department,
+              departmentId: input.departmentId,
+              evaluationTemplateId: input.evaluationTemplateId,
               employmentStartDate: input.employmentStartDate,
               officeId: input.officeId,
               scheduleId: input.scheduleId,
@@ -182,7 +224,7 @@ export const employeeService = {
             }
           }
         },
-        include: { employee: { include: employeeInclude }, userRoles: { include: { role: true } } }
+        select: { id: true, email: true, employee: { select: { id: true, employeeCode: true, officeId: true, scheduleId: true, status: true } } }
       });
 
       await tx.auditLog.create({
@@ -203,10 +245,19 @@ export const employeeService = {
           userAgent: audit.userAgent
         }
       });
-      return { employee: withSupervisorAccess(user.employee!), temporaryPassword, existingAccount: false as const };
+      return { employeeId: user.employee!.id, temporaryPassword: preparedPassword.temporaryPassword, existingAccount: false as const };
+    }, TX_OPTIONS);
+
+    const employee = await prisma.employee.findUniqueOrThrow({
+      where: { id: created.employeeId },
+      include: employeeInclude
     });
 
-    return created;
+    return {
+      employee: withSupervisorAccess(employee),
+      temporaryPassword: created.temporaryPassword,
+      existingAccount: created.existingAccount
+    };
   },
 
   async list(organizationId: string, input: ListInput, scope: OfficeScope) {
@@ -215,7 +266,7 @@ export const employeeService = {
       ...employeeOfficeFilter(scope, input.officeId),
       ...(input.status ? { status: input.status } : {}),
       ...(input.scheduleId ? { scheduleId: input.scheduleId } : {}),
-      ...(input.department ? { department: { equals: input.department, mode: "insensitive" as const } } : {}),
+      ...(input.departmentId ? { departmentId: input.departmentId } : {}),
       ...(input.search
         ? {
             OR: [
@@ -254,7 +305,8 @@ export const employeeService = {
       lastName?: string;
       phone?: string | null;
       jobTitle?: string | null;
-      department?: string | null;
+      departmentId?: string | null;
+      evaluationTemplateId?: string | null;
       employmentStartDate?: Date;
       officeId?: string | null;
       scheduleId?: string | null;
@@ -265,7 +317,12 @@ export const employeeService = {
   ) {
     const current = await this.get(organizationId, employeeId, scope);
     if (input.officeId !== undefined) assertOfficeInScope(scope, input.officeId, "You can only assign employees to offices you manage");
-    await validateAssignments(organizationId, input.officeId, input.scheduleId);
+    await validateAssignments(organizationId, {
+      officeId: input.officeId,
+      scheduleId: input.scheduleId,
+      departmentId: input.departmentId,
+      evaluationTemplateId: input.evaluationTemplateId
+    });
     if (input.supervisorId !== undefined) await validateSupervisor(organizationId, employeeId, input.supervisorId);
 
     return prisma.$transaction(async (tx) => {

@@ -14,6 +14,12 @@ export type AuthContext = {
   restricted: boolean;
   organizationId: string | null;
   officeIds?: string[];
+  activeContext?: {
+    key: string;
+    type: "platform" | "org_admin" | "office_admin" | "employee";
+    organizationId: string | null;
+    officeIds: string[];
+  };
 };
 
 export function isSuperAdmin(auth?: AuthContext | null) {

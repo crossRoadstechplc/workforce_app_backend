@@ -11,7 +11,7 @@ const employeeCardSelect = {
   middleName: true,
   lastName: true,
   jobTitle: true,
-  department: true,
+  department: { select: { id: true, name: true } },
   employeeCode: true,
   office: { select: { id: true, name: true } }
 } as const;
@@ -41,7 +41,7 @@ type EmployeeCard = {
   middleName: string | null;
   lastName: string;
   jobTitle: string | null;
-  department: string | null;
+  department: { id: string; name: string } | null;
   employeeCode: string;
   office: { id: string; name: string } | null;
 };
@@ -59,7 +59,7 @@ function serializeEmployee(employee: EmployeeCard) {
     lastName: employee.lastName,
     displayName: displayName(employee),
     jobTitle: employee.jobTitle,
-    department: employee.department,
+    department: employee.department?.name ?? null,
     employeeCode: employee.employeeCode,
     officeName: employee.office?.name ?? null
   };
@@ -227,7 +227,7 @@ export const chatService = {
               { middleName: { contains: q, mode: "insensitive" as const } },
               { employeeCode: { contains: q, mode: "insensitive" as const } },
               { jobTitle: { contains: q, mode: "insensitive" as const } },
-              { department: { contains: q, mode: "insensitive" as const } }
+              { department: { name: { contains: q, mode: "insensitive" as const } } }
             ]
           }
         : {})

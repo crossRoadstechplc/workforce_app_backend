@@ -1,97 +1,100 @@
-import type { EvaluationItemSection } from "../../generated/prisma/client.js";
+import type { EvaluationItemSection, EvaluationScoringSource } from "../../generated/prisma/client.js";
 
 export type DefaultTemplateItem = {
   section: EvaluationItemSection;
   itemKey: string;
   label: string;
+  prompt: string;
+  scoringSource: EvaluationScoringSource;
   sortOrder: number;
 };
 
-export const SOFTWARE_ENGINEER_TEMPLATE_NAME = "Internal — Software Engineer";
+export const STANDARD_PERFORMANCE_TEMPLATE_NAME = "Standard performance evaluation";
 
-export const softwareEngineerTemplateItems: DefaultTemplateItem[] = [
-  { section: "METRIC", itemKey: "metric.timeliness_punctuality", label: "Timeliness Punctuality", sortOrder: 10 },
-  { section: "METRIC", itemKey: "metric.communication_skills", label: "Communication Skills", sortOrder: 20 },
-  { section: "METRIC", itemKey: "metric.problem_solving_ability", label: "Problem-Solving Ability", sortOrder: 30 },
-  { section: "METRIC", itemKey: "metric.collaboration_and_teamwork", label: "Collaboration and Teamwork", sortOrder: 40 },
-  { section: "METRIC", itemKey: "metric.initiative_and_proactivity", label: "Initiative and Proactivity", sortOrder: 50 },
-  { section: "METRIC", itemKey: "metric.system_implementation", label: "System implementation", sortOrder: 60 },
+export const RELIABILITY_ATTENDANCE_ITEM_KEY = "competency.reliability_attendance";
+
+/** Old form names retired from the product. */
+export const LEGACY_EVALUATION_TEMPLATE_NAMES = ["Internal — Software Engineer"] as const;
+
+export const standardPerformanceTemplateItems: DefaultTemplateItem[] = [
   {
-    section: "RESPONSIBILITY",
-    itemKey: "responsibility.scalable_architecture",
-    label: "Design a scalable, secure system with the right architecture, data flow, and tech stack.",
-    sortOrder: 110
+    section: "METRIC",
+    itemKey: "competency.quality_of_work",
+    label: "Quality of Work",
+    prompt: "How consistently does the employee produce accurate, thorough, and high-quality work?",
+    scoringSource: "HUMAN",
+    sortOrder: 10
   },
   {
-    section: "RESPONSIBILITY",
-    itemKey: "responsibility.responsive_frontends",
-    label: "Build responsive frontends with smooth state management and API integration.",
-    sortOrder: 120
+    section: "METRIC",
+    itemKey: "competency.productivity",
+    label: "Productivity",
+    prompt: "How effectively does the employee complete assigned work within expected timelines?",
+    scoringSource: "HUMAN",
+    sortOrder: 20
   },
   {
-    section: "RESPONSIBILITY",
-    itemKey: "responsibility.secure_backends",
-    label: "Develop secure, high-performance backends with optimized logic and data management.",
-    sortOrder: 130
+    section: "METRIC",
+    itemKey: "competency.job_knowledge",
+    label: "Job Knowledge",
+    prompt: "How well does the employee understand and apply the knowledge and skills required for the role?",
+    scoringSource: "HUMAN",
+    sortOrder: 30
   },
   {
-    section: "RESPONSIBILITY",
-    itemKey: "responsibility.code_quality",
-    label: "Ensure code quality through testing, debugging, and code reviews.",
-    sortOrder: 140
+    section: "METRIC",
+    itemKey: RELIABILITY_ATTENDANCE_ITEM_KEY,
+    label: "Reliability and Attendance",
+    prompt: "How dependable is the employee in terms of attendance, punctuality, and completing commitments?",
+    scoringSource: "SYSTEM_ATTENDANCE",
+    sortOrder: 40
   },
   {
-    section: "RESPONSIBILITY",
-    itemKey: "responsibility.qa_processes",
-    label: "Implement QA processes to maintain reliability and performance.",
-    sortOrder: 150
+    section: "METRIC",
+    itemKey: "competency.communication",
+    label: "Communication",
+    prompt: "How clearly and professionally does the employee communicate with colleagues, supervisors, and clients?",
+    scoringSource: "HUMAN",
+    sortOrder: 50
   },
   {
-    section: "RESPONSIBILITY",
-    itemKey: "responsibility.site_email_config",
-    label: "Manage web-site and email server configuration",
-    sortOrder: 160
+    section: "METRIC",
+    itemKey: "competency.teamwork",
+    label: "Teamwork",
+    prompt: "How effectively does the employee cooperate with others and contribute to a positive working environment?",
+    scoringSource: "HUMAN",
+    sortOrder: 60
   },
   {
-    section: "RESPONSIBILITY",
-    itemKey: "responsibility.monitor_systems",
-    label: "Monitor systems to ensure reliability, performance, and scalability.",
-    sortOrder: 170
+    section: "METRIC",
+    itemKey: "competency.initiative",
+    label: "Initiative",
+    prompt: "How willing is the employee to take responsibility, work independently, and identify tasks that need attention?",
+    scoringSource: "HUMAN",
+    sortOrder: 70
   },
   {
-    section: "SKILL_IMPROVED",
-    itemKey: "skill.ai_machine_learning",
-    label: "AI & Machine Learning Development (Build AI Systems)",
-    sortOrder: 210
+    section: "METRIC",
+    itemKey: "competency.problem_solving",
+    label: "Problem-Solving",
+    prompt: "How effectively does the employee identify problems and develop practical solutions?",
+    scoringSource: "HUMAN",
+    sortOrder: 80
   },
   {
-    section: "SKILL_IMPROVED",
-    itemKey: "skill.communication_business_logic",
-    label: "Communication & Business Logic Understanding",
-    sortOrder: 220
+    section: "METRIC",
+    itemKey: "competency.adaptability",
+    label: "Adaptability",
+    prompt: "How well does the employee respond to changes, feedback, new responsibilities, and workplace challenges?",
+    scoringSource: "HUMAN",
+    sortOrder: 90
   },
   {
-    section: "SKILL_IMPROVED",
-    itemKey: "skill.system_design_problem_solving",
-    label: "System Design & Problem-Solving",
-    sortOrder: 230
-  },
-  {
-    section: "GOAL",
-    itemKey: "goal.ai_machine_learning",
-    label: "AI & Machine Learning Development (Build AI Systems)",
-    sortOrder: 310
-  },
-  {
-    section: "GOAL",
-    itemKey: "goal.communication_business_logic",
-    label: "Communication & Business Logic Understanding",
-    sortOrder: 320
-  },
-  {
-    section: "GOAL",
-    itemKey: "goal.system_design_problem_solving",
-    label: "System Design & Problem-Solving",
-    sortOrder: 330
+    section: "METRIC",
+    itemKey: "competency.professionalism_accountability",
+    label: "Professionalism and Accountability",
+    prompt: "How consistently does the employee demonstrate integrity, respect, good judgment, and responsibility for their work?",
+    scoringSource: "HUMAN",
+    sortOrder: 100
   }
 ];

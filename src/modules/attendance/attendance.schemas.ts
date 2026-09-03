@@ -29,3 +29,8 @@ export const checkOutSchema = z.object({ body: z.object({
   workDescription: z.string().trim().min(20).max(5000),
   photoUrl: photoUrl
 }) });
+export const attendanceConfigUpdateSchema = z.object({
+  body: z.object({
+    photoRequiredEnabled: z.boolean()
+  })
+});

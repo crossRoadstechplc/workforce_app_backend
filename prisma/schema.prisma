@@ -23,6 +23,13 @@ enum TokenType {
   REFRESH
 }
 
+enum AttendanceCorrectnessStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
 enum AttendanceStatus {
   OPEN
   PRESENT_ON_TIME
@@ -67,6 +74,9 @@ enum NotificationType {
   LEAVE_APPROVED
   LEAVE_REJECTED
   ATTENDANCE_CORRECTED
+  ATTENDANCE_CORRECTNESS_SUBMITTED
+  ATTENDANCE_CORRECTNESS_APPROVED
+  ATTENDANCE_CORRECTNESS_REJECTED
   WORKSHEET_REVIEWED
   EVALUATION_OPENED
   EVALUATION_SELF_SUBMITTED
@@ -117,6 +127,11 @@ enum EvaluationItemSection {
   RESPONSIBILITY
   SKILL_IMPROVED
   GOAL
+}
+
+enum EvaluationScoringSource {
+  HUMAN
+  SYSTEM_ATTENDANCE
 }
 
 enum MeetingBookingStatus {
@@ -171,15 +186,17 @@ enum SubscriptionBillingCycle {
 }
 
 model Organization {
-  id          String                     @id @default(uuid()) @db.Uuid
-  name        String
-  slug        String                     @unique
-  isActive    Boolean                    @default(true) @map("is_active")
-  createdAt   DateTime                   @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime                   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id                      String                     @id @default(uuid()) @db.Uuid
+  name                    String
+  slug                    String                     @unique
+  isActive                Boolean                    @default(true) @map("is_active")
+  attendancePhotoRequired Boolean                    @default(true) @map("attendance_photo_required")
+  createdAt               DateTime                   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt               DateTime                   @updatedAt @map("updated_at") @db.Timestamptz(6)
   memberships OrganizationMembership[]
   offices     Office[]
   schedules   WorkSchedule[]
+  departments Department[]
   leaveTypes  LeaveType[]
   employees             Employee[]
   invites               Invite[]
@@ -192,6 +209,7 @@ model Organization {
   chatConversations     ChatConversation[]
   vaultCredentials      VaultCredential[]
   officeSubscriptions   OfficeSubscription[]
+  attendanceCorrectnessRequests AttendanceCorrectnessRequest[]
   @@map("organizations")
 }
 
@@ -248,6 +266,7 @@ model User {
   chatParticipations      ChatParticipant[]
   chatMessages            ChatMessage[]              @relation("ChatSender")
   vaultCredentials        VaultCredential[]          @relation("VaultCredentialCreator")
+  reviewedCorrectnessRequests AttendanceCorrectnessRequest[] @relation("CorrectnessReviewer")
   @@map("users")
 }
 
@@ -358,29 +377,46 @@ model WorkScheduleDay {
   @@map("work_schedule_days")
 }
 
+model Department {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  name           String
+  isActive       Boolean      @default(true) @map("is_active")
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  employees      Employee[]
+  @@unique([organizationId, name])
+  @@index([organizationId, isActive])
+  @@map("departments")
+}
+
 model Employee {
   id                  String         @id @default(uuid()) @db.Uuid
   organizationId      String         @map("organization_id") @db.Uuid
   userId              String         @unique @map("user_id") @db.Uuid
   employeeCode        String         @map("employee_code")
-  officeId            String?        @map("office_id") @db.Uuid
-  scheduleId          String?        @map("schedule_id") @db.Uuid
-  firstName           String         @map("first_name")
-  middleName          String?        @map("middle_name")
-  lastName            String         @map("last_name")
-  phone               String?
-  jobTitle            String?        @map("job_title")
-  department          String?
-  employmentStartDate DateTime       @map("employment_start_date") @db.Date
+  officeId              String?             @map("office_id") @db.Uuid
+  scheduleId            String?             @map("schedule_id") @db.Uuid
+  departmentId          String?             @map("department_id") @db.Uuid
+  evaluationTemplateId  String?             @map("evaluation_template_id") @db.Uuid
+  firstName             String              @map("first_name")
+  middleName            String?             @map("middle_name")
+  lastName              String              @map("last_name")
+  phone                 String?
+  jobTitle              String?             @map("job_title")
+  employmentStartDate   DateTime            @map("employment_start_date") @db.Date
   supervisorId        String?        @map("supervisor_id") @db.Uuid
   status              EmployeeStatus @default(ACTIVE)
   createdAt           DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt           DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
   organization        Organization   @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   user                User           @relation(fields: [userId], references: [id], onDelete: Restrict)
-  office              Office?        @relation(fields: [officeId], references: [id], onDelete: SetNull)
-  schedule            WorkSchedule?  @relation(fields: [scheduleId], references: [id], onDelete: SetNull)
-  supervisor          Employee?      @relation("EmployeeSupervisor", fields: [supervisorId], references: [id], onDelete: SetNull)
+  office              Office?             @relation(fields: [officeId], references: [id], onDelete: SetNull)
+  schedule            WorkSchedule?       @relation(fields: [scheduleId], references: [id], onDelete: SetNull)
+  department          Department?         @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  evaluationTemplate  EvaluationTemplate? @relation(fields: [evaluationTemplateId], references: [id], onDelete: SetNull)
+  supervisor          Employee?           @relation("EmployeeSupervisor", fields: [supervisorId], references: [id], onDelete: SetNull)
   directReports       Employee[]     @relation("EmployeeSupervisor")
   timesheets          Timesheet[]
   worksheets          Worksheet[]
@@ -388,10 +424,13 @@ model Employee {
   leaveRequests       LeaveRequest[]
   evaluations         Evaluation[]
   meetingBookings     MeetingBooking[]
+  attendanceCorrectnessRequests AttendanceCorrectnessRequest[]
   @@unique([organizationId, employeeCode])
   @@index([organizationId, status])
   @@index([officeId])
   @@index([scheduleId])
+  @@index([departmentId])
+  @@index([evaluationTemplateId])
   @@index([status, officeId])
   @@index([supervisorId])
   @@map("employees")
@@ -495,6 +534,7 @@ model Timesheet {
   lateReason                  LateReason?
   worksheet                   Worksheet?
   corrections                 AttendanceCorrection[]
+  correctnessRequests         AttendanceCorrectnessRequest[]
   @@unique([employeeId, workDate])
   @@index([employeeId, isOpen])
   @@index([workDate, status])
@@ -568,6 +608,29 @@ model AttendanceCorrection {
   timesheet       Timesheet @relation(fields: [timesheetId], references: [id], onDelete: Restrict)
   @@index([timesheetId, createdAt])
   @@map("attendance_corrections")
+}
+
+model AttendanceCorrectnessRequest {
+  id               String                       @id @default(uuid()) @db.Uuid
+  organizationId   String                       @map("organization_id") @db.Uuid
+  employeeId       String                       @map("employee_id") @db.Uuid
+  workDate         DateTime                     @map("work_date") @db.Date
+  timesheetId      String?                      @map("timesheet_id") @db.Uuid
+  status           AttendanceCorrectnessStatus  @default(PENDING)
+  employeeNote     String?                      @map("employee_note")
+  adminNote        String?                      @map("admin_note")
+  reviewedByUserId String?                      @map("reviewed_by_user_id") @db.Uuid
+  reviewedAt       DateTime?                    @map("reviewed_at") @db.Timestamptz(6)
+  createdAt        DateTime                     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime                     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization     Organization                 @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  employee         Employee                     @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  timesheet        Timesheet?                   @relation(fields: [timesheetId], references: [id], onDelete: SetNull)
+  reviewedBy       User?                        @relation("CorrectnessReviewer", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+  @@index([organizationId, workDate, status])
+  @@index([employeeId, workDate])
+  @@index([employeeId, status])
+  @@map("attendance_correctness_requests")
 }
 
 model LeaveType {
@@ -665,19 +728,22 @@ model EvaluationTemplate {
   organization   Organization              @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   items          EvaluationTemplateItem[]
   evaluations    Evaluation[]
+  employees      Employee[]
   @@index([organizationId, isActive])
   @@map("evaluation_templates")
 }
 
 model EvaluationTemplateItem {
-  id         String                 @id @default(uuid()) @db.Uuid
-  templateId String                 @map("template_id") @db.Uuid
-  section    EvaluationItemSection
-  itemKey    String                 @map("item_key")
-  label      String
-  sortOrder  Int                    @map("sort_order")
-  createdAt  DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
-  template   EvaluationTemplate     @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  id            String                   @id @default(uuid()) @db.Uuid
+  templateId    String                   @map("template_id") @db.Uuid
+  section       EvaluationItemSection
+  itemKey       String                   @map("item_key")
+  label         String
+  prompt        String?
+  scoringSource EvaluationScoringSource  @default(HUMAN) @map("scoring_source")
+  sortOrder     Int                      @map("sort_order")
+  createdAt     DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+  template      EvaluationTemplate       @relation(fields: [templateId], references: [id], onDelete: Cascade)
   @@unique([templateId, itemKey])
   @@index([templateId, sortOrder])
   @@map("evaluation_template_items")
@@ -744,18 +810,21 @@ model Evaluation {
 }
 
 model EvaluationScore {
-  id                String                 @id @default(uuid()) @db.Uuid
-  evaluationId      String                 @map("evaluation_id") @db.Uuid
-  itemKey           String                 @map("item_key")
+  id                String                   @id @default(uuid()) @db.Uuid
+  evaluationId      String                   @map("evaluation_id") @db.Uuid
+  itemKey           String                   @map("item_key")
   section           EvaluationItemSection
   label             String
-  sortOrder         Int                    @map("sort_order")
-  selfScore         Int?                   @map("self_score")
-  evaluatorScore    Int?                   @map("evaluator_score")
-  evaluatorComment  String?                @map("evaluator_comment")
-  createdAt         DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt         DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
-  evaluation        Evaluation             @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
+  prompt            String?
+  scoringSource     EvaluationScoringSource  @default(HUMAN) @map("scoring_source")
+  sortOrder         Int                      @map("sort_order")
+  selfScore         Int?                     @map("self_score")
+  evaluatorScore    Int?                     @map("evaluator_score")
+  systemScore       Int?                     @map("system_score")
+  evaluatorComment  String?                  @map("evaluator_comment")
+  createdAt         DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(6)
+  evaluation        Evaluation               @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
   @@unique([evaluationId, itemKey])
   @@index([evaluationId, sortOrder])
   @@map("evaluation_scores")

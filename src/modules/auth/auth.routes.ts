@@ -1,9 +1,12 @@
 import { Router } from "express";
 import { authenticate } from "../../middleware/authenticate.js";
-import { changePassword, login, logout, me, refresh } from "./auth.controller.js";
+import { changePassword, listContexts, login, logout, me, refresh, selectContext, switchContext } from "./auth.controller.js";
 export const authRouter = Router();
 authRouter.post("/login", login);
+authRouter.post("/select-context", selectContext);
 authRouter.post("/refresh", refresh);
 authRouter.post("/change-password", authenticate, changePassword);
+authRouter.post("/switch-context", authenticate, switchContext);
+authRouter.get("/contexts", authenticate, listContexts);
 authRouter.post("/logout", authenticate, logout);
 authRouter.get("/me", authenticate, me);

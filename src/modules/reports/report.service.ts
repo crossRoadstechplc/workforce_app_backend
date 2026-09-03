@@ -183,7 +183,7 @@ export const reportService = {
         skip,
         take: input.pageSize,
         include: {
-          employee: { select: { employeeCode: true, firstName: true, lastName: true, department: true } },
+          employee: { select: { employeeCode: true, firstName: true, lastName: true, department: { select: { name: true } } } },
           office: { select: { name: true } }
         }
       }),
@@ -208,7 +208,7 @@ export const reportService = {
         skip,
         take: input.pageSize,
         include: {
-          employee: { select: { employeeCode: true, firstName: true, lastName: true, department: true } },
+          employee: { select: { employeeCode: true, firstName: true, lastName: true, department: { select: { name: true } } } },
           timesheet: { select: { workedMinutes: true, status: true } }
         }
       }),
@@ -233,7 +233,7 @@ export const reportService = {
         skip,
         take: input.pageSize,
         include: {
-          employee: { select: { employeeCode: true, firstName: true, lastName: true, department: true } },
+          employee: { select: { employeeCode: true, firstName: true, lastName: true, department: { select: { name: true } } } },
           leaveType: true,
           decisions: { orderBy: { decidedAt: "desc" }, take: 1 }
         }

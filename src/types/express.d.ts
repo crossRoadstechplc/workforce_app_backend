@@ -9,6 +9,12 @@ declare global {
         restricted: boolean;
         organizationId: string | null;
         officeIds: string[];
+        activeContext?: {
+          key: string;
+          type: "platform" | "org_admin" | "office_admin" | "employee";
+          organizationId: string | null;
+          officeIds: string[];
+        };
         typ?: "access" | "display";
         boardMode?: "ROOMS" | "PEOPLE" | "BOTH";
       };

@@ -4,8 +4,9 @@ import { recordManifest } from "./builders/user.js";
 
 export const orgAdminPermissions = [
   "employee.create", "employee.view", "employee.update", "employee.deactivate",
-  "office.manage", "schedule.manage", "office_admin.manage",
+  "office.manage", "schedule.manage", "department.manage", "office_admin.manage",
   "attendance.check_in", "attendance.check_out", "attendance.view_own", "attendance.view_all", "attendance.correct",
+  "attendance.correctness.request", "attendance.correctness.review",
   "worksheet.create", "worksheet.view_own", "worksheet.view_all", "worksheet.review",
   "leave.request", "leave.view_own", "leave.view_all", "leave.approve", "leave.reject",
   "evaluation.view_own", "evaluation.submit_own",
@@ -20,7 +21,7 @@ export const orgAdminPermissions = [
 
 export const officeAdminPermissions = [
   "employee.create", "employee.view", "employee.update", "employee.deactivate",
-  "attendance.view_all", "attendance.correct",
+  "attendance.view_all", "attendance.correct", "attendance.correctness.review",
   "worksheet.view_all", "worksheet.review",
   "leave.view_all", "leave.approve", "leave.reject",
   "evaluation.view_office", "evaluation.review",
@@ -34,7 +35,7 @@ export const platformPermissions = [
 ];
 
 export const employeePermissions = [
-  "attendance.check_in", "attendance.check_out", "attendance.view_own",
+  "attendance.check_in", "attendance.check_out", "attendance.view_own", "attendance.correctness.request",
   "worksheet.create", "worksheet.view_own",
   "leave.request", "leave.view_own",
   "evaluation.view_own", "evaluation.submit_own",

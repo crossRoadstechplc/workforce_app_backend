@@ -3,7 +3,8 @@ import { prisma } from "../../database/prisma.js";
 import { attendancePhotoService } from "./attendance-photo.service.js";
 import { AppError } from "../../shared/errors/app-error.js";
 import { deliverNotification } from "../notifications/notification.service.js";
-import { emitToOfficeDisplay, emitToOrgAdmins, emitToUser } from "../../realtime/socket.server.js";
+import { emitToOfficeDisplay, emitToOrgAdmins, emitToOrgRole, emitToUser } from "../../realtime/socket.server.js";
+import { ROLE } from "../../shared/tenancy.js";
 import { formatWorkDateKey, todayWorkDate, todayWorkDateKey, workDateFromKey } from "../../shared/work-date.js";
 
 type LocationInput = { latitude: number; longitude: number; accuracyMeters: number; capturedAt: Date };
@@ -18,12 +19,19 @@ function scheduledInstant(workDate: string, hhmm: string, timezone: string) {
   return dt;
 }
 
-async function employeeContext(userId: string) {
+async function activeEmployee(userId: string) {
   const employee = await prisma.employee.findUnique({
     where: { userId },
     include: { user: true, office: true, schedule: { include: { days: true } } }
   });
-  if (!employee || employee.status !== "ACTIVE" || employee.user.status !== "ACTIVE") throw new AppError(403, "EMPLOYEE_INACTIVE", "Active employee account required");
+  if (!employee || employee.status !== "ACTIVE" || employee.user.status !== "ACTIVE") {
+    throw new AppError(403, "EMPLOYEE_INACTIVE", "Active employee account required");
+  }
+  return employee;
+}
+
+async function employeeContext(userId: string) {
+  const employee = await activeEmployee(userId);
   if (!employee.office || !employee.office.isActive) throw new AppError(400, "OFFICE_NOT_ASSIGNED", "An active office assignment is required");
   if (!employee.schedule || !employee.schedule.isActive) throw new AppError(400, "SCHEDULE_NOT_ASSIGNED", "An active work schedule is required");
   return employee;
@@ -37,6 +45,22 @@ function dayRuleForWeekday(schedule: NonNullable<Awaited<ReturnType<typeof emplo
     return { checkInTime: schedule.checkInTime, checkOutTime: schedule.checkOutTime };
   }
   return null;
+}
+
+async function assertNotOnApprovedLeave(employeeId: string, workDateKey: string) {
+  const workDate = workDateFromKey(workDateKey);
+  const leave = await prisma.leaveRequest.findFirst({
+    where: {
+      employeeId,
+      status: "APPROVED",
+      startDate: { lte: workDate },
+      endDate: { gte: workDate }
+    },
+    select: { id: true }
+  });
+  if (leave) {
+    throw new AppError(409, "ON_APPROVED_LEAVE", "You are on approved leave for this day and cannot check in");
+  }
 }
 
 function validateCapturedAt(capturedAt: Date, serverTime: Date) {
@@ -159,15 +183,15 @@ function computeCheckoutMetrics(
 export const attendanceService = {
   formatTimesheetResponse,
   async current(userId: string) {
-    const employee = await employeeContext(userId);
+    const employee = await activeEmployee(userId);
     const open = await prisma.timesheet.findFirst({
       where: { employeeId: employee.id, isOpen: true },
       include: { lateReason: true, locations: true }
     });
     if (open) return formatTimesheetResponse(open);
 
-    // After checkout, still return today's timesheet so the app shows
-    // "completed" instead of offering another check-in.
+    if (!employee.office?.isActive || !employee.schedule?.isActive) return null;
+
     const zone = employee.office!.timezone || employee.schedule!.timezone;
     const workDate = todayWorkDate(zone);
     const todayTimesheet = await prisma.timesheet.findFirst({
@@ -179,9 +203,27 @@ export const attendanceService = {
   },
 
   async officeContext(userId: string) {
-    const employee = await employeeContext(userId);
-    const office = employee.office!;
+    const employee = await activeEmployee(userId);
+    const photoRequired = await attendancePhotoService.isRequiredForOrganization(employee.organizationId);
+    if (!employee.office || !employee.office.isActive) {
+      return {
+        assigned: false as const,
+        reason: "OFFICE_NOT_ASSIGNED" as const,
+        message: "No office has been assigned to your profile yet. Contact your administrator.",
+        photoRequired
+      };
+    }
+    if (!employee.schedule || !employee.schedule.isActive) {
+      return {
+        assigned: false as const,
+        reason: "SCHEDULE_NOT_ASSIGNED" as const,
+        message: "No work schedule has been assigned to your profile yet. Contact your administrator.",
+        photoRequired
+      };
+    }
+    const office = employee.office;
     return {
+      assigned: true as const,
       id: office.id,
       name: office.name,
       address: office.address,
@@ -190,7 +232,7 @@ export const attendanceService = {
       allowedRadiusMeters: office.allowedRadiusMeters,
       maximumAccuracyMeters: office.maximumAccuracyMeters,
       timezone: office.timezone || employee.schedule!.timezone,
-      photoRequired: attendancePhotoService.isRequired()
+      photoRequired
     };
   },
 
@@ -201,6 +243,7 @@ export const attendanceService = {
     const now = new Date();
     validateCapturedAt(input.capturedAt, now);
     const clock = attendanceClock(employee, now);
+    await assertNotOnApprovedLeave(employee.id, clock.workDate);
     const geo = await geofence(input, employee.office!);
     return { ...geo, isLate: clock.isLate, lateMinutes: clock.lateMinutes, requiresLateReason: clock.isLate, workDate: clock.workDate, serverTime: now };
   },
@@ -215,11 +258,12 @@ export const attendanceService = {
     const now = new Date();
     validateCapturedAt(input.capturedAt, now);
     const clock = attendanceClock(employee, now);
+    await assertNotOnApprovedLeave(employee.id, clock.workDate);
     const geo = await geofence(input, employee.office!);
     if (!geo.insideRadius) throw new AppError(422, "OUTSIDE_OFFICE_RADIUS", "Check-in is outside the allowed office radius");
     if (clock.isLate && !input.lateReasonType) throw new AppError(422, "LATE_REASON_REQUIRED", "A late reason is required");
     if (!clock.isLate && (input.lateReasonType || input.lateReasonDescription)) throw new AppError(422, "LATE_REASON_NOT_ALLOWED", "A late reason is only accepted for late check-in");
-    attendancePhotoService.validatePhotoUrl(input.photoUrl);
+    await attendancePhotoService.validatePhotoUrl(employee.organizationId, input.photoUrl);
 
     const result = await prisma.$transaction(async (tx) => {
       const open = await tx.timesheet.findFirst({ where: { employeeId: employee.id, isOpen: true }, select: { id: true } });
@@ -263,7 +307,7 @@ export const attendanceService = {
     validateCapturedAt(input.capturedAt, now);
     const geo = await geofence(input, { latitude: open.officeLatitude, longitude: open.officeLongitude, allowedRadiusMeters: open.officeAllowedRadiusMeters, maximumAccuracyMeters: open.officeMaximumAccuracyMeters });
     if (!geo.insideRadius) throw new AppError(422, "OUTSIDE_OFFICE_RADIUS", "Checkout is outside the allowed office radius");
-    attendancePhotoService.validatePhotoUrl(input.photoUrl);
+    await attendancePhotoService.validatePhotoUrl(employee.organizationId, input.photoUrl);
     const metrics = computeCheckoutMetrics(open, now);
     const completedStatus = open.isLate ? "COMPLETED_LATE" : "COMPLETED_ON_TIME";
     const closedCarriedOverShift = formatWorkDateKey(open.workDate) < todayWorkDateKey(open.timezone);
@@ -305,5 +349,37 @@ export const attendanceService = {
     emitToOrgAdmins(employee.organizationId, "employee.checked_out", { employeeId: employee.id, timesheetId: result.timesheet.id, workedMinutes: metrics.workedMinutes });
     emitToOfficeDisplay(employee.organizationId, employee.officeId, "display.people_changed", { employeeId: employee.id });
     return formatTimesheetResponse(result.timesheet)!;
+  },
+
+  async adminConfig(organizationId: string) {
+    const org = await prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: { attendancePhotoRequired: true }
+    });
+    if (!org) throw new AppError(404, "ORG_NOT_FOUND", "Organization not found");
+    const photoRequired = await attendancePhotoService.isRequiredForOrganization(organizationId);
+    return {
+      photoRequiredEnabled: org.attendancePhotoRequired,
+      photoRequired,
+      photosAvailable: attendancePhotoService.isGloballyEnabled()
+    };
+  },
+
+  async updateAdminConfig(organizationId: string, input: { photoRequiredEnabled: boolean }) {
+    const org = await prisma.organization.update({
+      where: { id: organizationId },
+      data: { attendancePhotoRequired: input.photoRequiredEnabled },
+      select: { attendancePhotoRequired: true }
+    });
+    const photoRequired = await attendancePhotoService.isRequiredForOrganization(organizationId);
+    emitToOrgRole(organizationId, ROLE.EMPLOYEE, "attendance.config_changed", {
+      photoRequired,
+      photoRequiredEnabled: org.attendancePhotoRequired
+    });
+    return {
+      photoRequiredEnabled: org.attendancePhotoRequired,
+      photoRequired,
+      photosAvailable: attendancePhotoService.isGloballyEnabled()
+    };
   }
 };

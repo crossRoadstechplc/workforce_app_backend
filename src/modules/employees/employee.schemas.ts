@@ -16,7 +16,8 @@ export const createEmployeeSchema = z.object({
   lastName: z.string().trim().min(1).max(100),
   phone: optionalText,
   jobTitle: optionalText,
-  department: optionalText,
+  departmentId: z.string().uuid().optional().nullable(),
+  evaluationTemplateId: z.string().uuid().optional().nullable(),
   employmentStartDate: z.coerce.date(),
   officeId: z.string().uuid().optional().nullable(),
   scheduleId: z.string().uuid().optional().nullable(),
@@ -32,7 +33,8 @@ export const updateEmployeeSchema = z.object({
   lastName: z.string().trim().min(1).max(100).optional(),
   phone: optionalText,
   jobTitle: optionalText,
-  department: optionalText,
+  departmentId: z.string().uuid().optional().nullable(),
+  evaluationTemplateId: z.string().uuid().optional().nullable(),
   employmentStartDate: z.coerce.date().optional(),
   officeId: z.string().uuid().optional().nullable(),
   scheduleId: z.string().uuid().optional().nullable(),
@@ -59,5 +61,5 @@ export const employeeListSchema = z.object({
   status: employeeStatus.optional(),
   officeId: z.string().uuid().optional(),
   scheduleId: z.string().uuid().optional(),
-  department: z.string().trim().max(100).optional()
+  departmentId: z.string().uuid().optional()
 });

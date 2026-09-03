@@ -2,77 +2,57 @@ import argon2 from "argon2";
 import { prisma } from "../../database/prisma.js";
 import { AppError } from "../../shared/errors/app-error.js";
 import { env } from "../../config/env.js";
-import { isOfficeAdmin, isOrgAdmin, ROLE } from "../../shared/tenancy.js";
-import { hashToken, signAccessToken, signRefreshToken, verifyRefreshToken } from "./token.service.js";
+import {
+  getAvailableContexts,
+  resolveScopedIdentity,
+  type ScopedIdentity
+} from "./context.service.js";
+import { isPortalContextType, resolveDefaultContextKey, type LoginContext } from "./context.types.js";
+import {
+  hashToken,
+  signAccessToken,
+  signPreAuthToken,
+  signRefreshToken,
+  verifyPreAuthToken,
+  verifyRefreshToken
+} from "./token.service.js";
 
-type IdentityDb = Pick<typeof prisma, "user" | "organizationMembership">;
 type SessionDb = Pick<typeof prisma, "user" | "refreshToken" | "organizationMembership">;
 
-async function identity(userId: string, db: IdentityDb = prisma) {
-  const user = await db.user.findUnique({
-    where: { id: userId },
-    include: {
-      userRoles: { include: { role: { include: { permissions: { include: { permission: true } } } } } },
-      memberships: { include: { organization: true }, take: 1 },
-      adminOffices: { include: { office: { select: { id: true, name: true, isActive: true, organizationId: true } } } }
-    }
-  });
-  if (!user || user.status !== "ACTIVE") throw new AppError(401, "INVALID_SESSION", "Session is no longer valid");
-  const roles = user.userRoles.map((item) => item.role.name);
-  const permissions = [...new Set(user.userRoles.flatMap((item) => item.role.permissions.map((entry) => entry.permission.code)))];
-  const isPlatform = roles.includes(ROLE.SUPER_ADMIN);
-  const membership = user.memberships[0] ?? null;
-  const organizationId = isPlatform ? null : membership?.organizationId ?? null;
-  const organization = isPlatform ? null : membership?.organization
-    ? { id: membership.organization.id, name: membership.organization.name, slug: membership.organization.slug, isActive: membership.organization.isActive }
-    : null;
-  if (!isPlatform && !organizationId) throw new AppError(403, "ORG_MEMBERSHIP_REQUIRED", "User is not assigned to an organization");
-  if (organization && !organization.isActive) throw new AppError(403, "ORG_INACTIVE", "Organization is inactive");
-
-  const scopedOfficeAdmin = isOfficeAdmin({ roles, permissions, restricted: false, organizationId, userId }) && !isOrgAdmin({ roles, permissions, restricted: false, organizationId, userId });
-  const assignedOffices = user.adminOffices.filter((entry) => entry.office.isActive && entry.office.organizationId === organizationId);
-  const officeIds = scopedOfficeAdmin ? assignedOffices.map((entry) => entry.officeId) : [];
-  const offices = scopedOfficeAdmin ? assignedOffices.map((entry) => ({ id: entry.office.id, name: entry.office.name })) : [];
-
-  if (scopedOfficeAdmin && officeIds.length === 0) {
-    throw new AppError(403, "NO_OFFICE_ASSIGNMENT", "Office administrator has no assigned offices");
-  }
-
-  const employeeRecord = await prisma.employee.findUnique({
-    where: { userId },
-    select: { firstName: true, lastName: true, employeeCode: true }
-  });
-  const employee = employeeRecord
-    ? {
-        firstName: employeeRecord.firstName,
-        lastName: employeeRecord.lastName,
-        employeeCode: employeeRecord.employeeCode,
-        displayName: buildEmployeeDisplayName(employeeRecord.firstName, employeeRecord.lastName, user.email)
-      }
-    : null;
-
-  return { user, roles, permissions, organizationId, organization, officeIds, offices, employee };
+function sessionUserFromIdentity(identity: ScopedIdentity) {
+  return {
+    id: identity.user.id,
+    email: identity.user.email,
+    roles: identity.roles,
+    organizationId: identity.organizationId,
+    organization: identity.organization,
+    officeIds: identity.officeIds,
+    offices: identity.offices,
+    employee: identity.employee,
+    activeContext: identity.activeContext
+  };
 }
 
-function buildEmployeeDisplayName(firstName: string, lastName: string, email: string) {
-  const full = `${firstName} ${lastName}`.trim();
-  if (full) return full;
-  const prefix = email.split("@")[0]?.trim();
-  return prefix || email;
+async function resolveContextKeyForUser(userId: string, preferredKey?: string | null) {
+  const contexts = await getAvailableContexts(userId);
+  if (!contexts.length) throw new AppError(403, "NO_CONTEXT", "No login context is available for this account");
+  const key = preferredKey ? contexts.find((item) => item.key === preferredKey)?.key : undefined;
+  return key ?? resolveDefaultContextKey(contexts) ?? contexts[0]!.key;
 }
 
-async function issueSession(userId: string, deviceId?: string, db: SessionDb = prisma) {
-  const { user, roles, permissions, organizationId, organization, officeIds, offices, employee } = await identity(userId, db);
-  const restricted = user.mustChangePassword;
+async function issueSession(userId: string, contextKey: string, deviceId?: string, db: SessionDb = prisma) {
+  const identity = await resolveScopedIdentity(userId, contextKey);
+  const restricted = identity.user.mustChangePassword;
   const accessToken = await signAccessToken({
     userId,
-    roles,
-    permissions: restricted ? [] : permissions,
+    roles: identity.roles,
+    permissions: restricted ? [] : identity.permissions,
     restricted,
-    organizationId,
-    officeIds
+    organizationId: identity.organizationId,
+    officeIds: identity.officeIds,
+    activeContext: identity.activeContext
   });
-  const refreshToken = await signRefreshToken(userId);
+  const refreshToken = await signRefreshToken(userId, contextKey);
   await db.refreshToken.create({
     data: {
       userId,
@@ -85,59 +65,132 @@ async function issueSession(userId: string, deviceId?: string, db: SessionDb = p
     accessToken,
     refreshToken,
     mustChangePassword: restricted,
-    user: { id: user.id, email: user.email, roles, organizationId, organization, officeIds, offices, employee }
+    user: sessionUserFromIdentity(identity),
+    activeContext: identity.activeContext
   };
 }
 
-export const authService = {
-  async login(input: { login: string; password: string; deviceId?: string; organizationSlug?: string }) {
-    const normalizedLogin = input.login.trim();
-    const password = input.password.trim();
-    const email = normalizedLogin.toLowerCase();
-    const code = normalizedLogin.toUpperCase();
+async function verifyCredentials(input: { login: string; password: string; organizationSlug?: string }) {
+  const normalizedLogin = input.login.trim();
+  const password = input.password.trim();
+  const email = normalizedLogin.toLowerCase();
+  const code = normalizedLogin.toUpperCase();
 
-    let userId: string | null = null;
-    const byEmail = await prisma.user.findFirst({ where: { email }, select: { id: true, status: true, passwordHash: true } });
-    if (byEmail) {
-      userId = byEmail.id;
-      if (byEmail.status !== "ACTIVE" || !(await argon2.verify(byEmail.passwordHash, password))) {
-        throw new AppError(401, "INVALID_CREDENTIALS", "Invalid login or password");
+  let userId: string | null = null;
+  const byEmail = await prisma.user.findFirst({ where: { email }, select: { id: true, status: true, passwordHash: true } });
+  if (byEmail) {
+    userId = byEmail.id;
+    if (byEmail.status !== "ACTIVE" || !(await argon2.verify(byEmail.passwordHash, password))) {
+      throw new AppError(401, "INVALID_CREDENTIALS", "Invalid login or password");
+    }
+  } else {
+    const employeeWhere = input.organizationSlug
+      ? { employeeCode: code, organization: { slug: input.organizationSlug.toLowerCase() } }
+      : { employeeCode: code };
+    const employee = await prisma.employee.findFirst({
+      where: employeeWhere,
+      include: { user: { select: { id: true, status: true, passwordHash: true } } }
+    });
+    if (!employee) throw new AppError(401, "INVALID_CREDENTIALS", "Invalid login or password");
+    if (!input.organizationSlug) {
+      const collisions = await prisma.employee.count({ where: { employeeCode: code } });
+      if (collisions > 1) {
+        throw new AppError(400, "ORG_SLUG_REQUIRED", "Multiple organizations use this employee code. Provide organizationSlug.");
       }
-    } else {
-      const employeeWhere = input.organizationSlug
-        ? { employeeCode: code, organization: { slug: input.organizationSlug.toLowerCase() } }
-        : { employeeCode: code };
-      const employee = await prisma.employee.findFirst({
-        where: employeeWhere,
-        include: { user: { select: { id: true, status: true, passwordHash: true } } }
-      });
-      if (!employee) throw new AppError(401, "INVALID_CREDENTIALS", "Invalid login or password");
-      if (!input.organizationSlug) {
-        const collisions = await prisma.employee.count({ where: { employeeCode: code } });
-        if (collisions > 1) {
-          throw new AppError(400, "ORG_SLUG_REQUIRED", "Multiple organizations use this employee code. Provide organizationSlug.");
-        }
-      }
-      if (employee.user.status !== "ACTIVE" || !(await argon2.verify(employee.user.passwordHash, password))) {
-        throw new AppError(401, "INVALID_CREDENTIALS", "Invalid login or password");
-      }
-      userId = employee.user.id;
+    }
+    if (employee.user.status !== "ACTIVE" || !(await argon2.verify(employee.user.passwordHash, password))) {
+      throw new AppError(401, "INVALID_CREDENTIALS", "Invalid login or password");
+    }
+    userId = employee.user.id;
+  }
+
+  return userId;
+}
+
+/** Resolves identity for the active or default login context. */
+async function identity(userId: string, contextKey?: string | null) {
+  const key = contextKey ?? (await resolveContextKeyForUser(userId));
+  return resolveScopedIdentity(userId, key);
+}
+
+export const authService = {
+  async login(input: {
+    login: string;
+    password: string;
+    deviceId?: string;
+    organizationSlug?: string;
+    contextKey?: string;
+    lastContextKey?: string;
+  }) {
+    const userId = await verifyCredentials(input);
+    await prisma.user.update({ where: { id: userId }, data: { lastLoginAt: new Date() } });
+
+    const contexts = await getAvailableContexts(userId);
+    const defaultContextKey = resolveDefaultContextKey(contexts, input.lastContextKey ?? input.contextKey);
+
+    if (input.contextKey) {
+      return issueSession(userId, input.contextKey, input.deviceId);
     }
 
-    await prisma.user.update({ where: { id: userId }, data: { lastLoginAt: new Date() } });
-    return issueSession(userId, input.deviceId);
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { mustChangePassword: true } });
+    if (user?.mustChangePassword && defaultContextKey) {
+      return issueSession(userId, defaultContextKey, input.deviceId);
+    }
+
+    if (contexts.length <= 1 && defaultContextKey) {
+      return issueSession(userId, defaultContextKey, input.deviceId);
+    }
+
+    const preAuthToken = await signPreAuthToken(userId);
+    return {
+      requiresContextSelection: true,
+      preAuthToken,
+      contexts,
+      defaultContextKey
+    };
   },
+
+  async selectContext(input: { preAuthToken: string; contextKey: string; deviceId?: string }) {
+    const { userId } = await verifyPreAuthToken(input.preAuthToken).catch(() => {
+      throw new AppError(401, "INVALID_PRE_AUTH", "Login session expired. Please sign in again.");
+    });
+    return issueSession(userId, input.contextKey, input.deviceId);
+  },
+
+  async switchContext(userId: string, contextKey: string, input?: { deviceId?: string; refreshToken?: string }) {
+    if (input?.refreshToken) {
+      const stored = await prisma.refreshToken.findUnique({ where: { tokenHash: hashToken(input.refreshToken) } });
+      if (!stored || stored.userId !== userId || stored.revokedAt || stored.expiresAt <= new Date()) {
+        throw new AppError(401, "INVALID_REFRESH_TOKEN", "Refresh token is expired or revoked");
+      }
+      return prisma.$transaction(async (tx) => {
+        await tx.refreshToken.update({ where: { id: stored.id }, data: { revokedAt: new Date(), lastUsedAt: new Date() } });
+        return issueSession(userId, contextKey, input.deviceId ?? stored.deviceId ?? undefined, tx);
+      });
+    }
+    return issueSession(userId, contextKey, input?.deviceId);
+  },
+
+  async listContexts(userId: string) {
+    const contexts = await getAvailableContexts(userId);
+    return { contexts };
+  },
+
   async refresh(input: { refreshToken: string; deviceId?: string }) {
-    const { userId } = await verifyRefreshToken(input.refreshToken).catch(() => {
+    const verified = await verifyRefreshToken(input.refreshToken).catch(() => {
       throw new AppError(401, "INVALID_REFRESH_TOKEN", "Invalid refresh token");
     });
+    const { userId, activeContextKey } = verified;
     const stored = await prisma.refreshToken.findUnique({ where: { tokenHash: hashToken(input.refreshToken) } });
     if (!stored || stored.userId !== userId || stored.revokedAt || stored.expiresAt <= new Date()) {
       throw new AppError(401, "INVALID_REFRESH_TOKEN", "Refresh token is expired or revoked");
     }
+
+    const contextKey = activeContextKey ?? (await resolveContextKeyForUser(userId));
+
     return prisma.$transaction(async (tx) => {
       await tx.refreshToken.update({ where: { id: stored.id }, data: { revokedAt: new Date(), lastUsedAt: new Date() } });
-      const session = await issueSession(userId, input.deviceId ?? stored.deviceId ?? undefined, tx);
+      const session = await issueSession(userId, contextKey, input.deviceId ?? stored.deviceId ?? undefined, tx);
       await tx.refreshToken.update({
         where: { id: stored.id },
         data: {
@@ -150,7 +203,8 @@ export const authService = {
       return session;
     });
   },
-  async changePassword(userId: string, currentPassword: string, newPassword: string) {
+
+  async changePassword(userId: string, currentPassword: string, newPassword: string, activeContextKey?: string | null) {
     const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user || !(await argon2.verify(user.passwordHash, currentPassword))) {
       throw new AppError(400, "INVALID_CURRENT_PASSWORD", "Current password is incorrect");
@@ -163,13 +217,20 @@ export const authService = {
       prisma.user.update({ where: { id: userId }, data: { passwordHash, mustChangePassword: false } }),
       prisma.refreshToken.updateMany({ where: { userId, revokedAt: null }, data: { revokedAt: new Date() } })
     ]);
-    return issueSession(userId);
+    const contextKey = activeContextKey ?? (await resolveContextKeyForUser(userId));
+    return issueSession(userId, contextKey);
   },
+
   async logout(userId: string, refreshToken: string) {
     await prisma.refreshToken.updateMany({
       where: { userId, tokenHash: hashToken(refreshToken), revokedAt: null },
       data: { revokedAt: new Date() }
     });
   },
-  identity
+
+  identity,
+
+  filterPortalContexts(contexts: LoginContext[]) {
+    return contexts.filter((item) => isPortalContextType(item.type));
+  }
 };

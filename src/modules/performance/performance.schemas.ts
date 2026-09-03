@@ -12,7 +12,8 @@ const optionalDateString = z
   .transform((v) => new Date(`${v}T00:00:00.000Z`))
   .optional()
   .nullable();
-const score = z.number().int().min(1).max(10);
+/** Scores are 1–5 on the standard performance form. */
+const score = z.number().int().min(1).max(5);
 const optionalScore = score.optional().nullable();
 const uuid = z.string().uuid();
 const evaluationStatus = z.enum([
@@ -23,7 +24,8 @@ const evaluationStatus = z.enum([
   "EVALUATOR_SUBMITTED",
   "FINALIZED"
 ]);
-const itemSection = z.enum(["METRIC", "RESPONSIBILITY", "SKILL_IMPROVED", "GOAL"]);
+const itemSection = z.enum(["METRIC"]);
+const scoringSource = z.enum(["HUMAN", "SYSTEM_ATTENDANCE"]);
 
 export const evaluationIdSchema = z.object({ params: z.object({ id: uuid }) });
 export const cycleIdSchema = z.object({ params: z.object({ id: uuid }) });
@@ -133,6 +135,8 @@ const templateItemSchema = z.object({
   section: itemSection,
   itemKey: z.string().trim().min(1).max(120).optional(),
   label: z.string().trim().min(1).max(500),
+  prompt: z.string().trim().max(1000).optional().nullable(),
+  scoringSource: scoringSource.optional(),
   sortOrder: z.number().int().min(0).max(10000)
 });
 
