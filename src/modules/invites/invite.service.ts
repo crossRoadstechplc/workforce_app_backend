@@ -98,33 +98,36 @@ async function officeNamesFor(officeIds: string[]) {
 
 export async function deliverInvite(invite: Invite & { organization: { name: string } }, token: string) {
   const href = inviteUrl(invite.type, token);
+  const requiresPassword = await inviteRequiresPassword(invite.email, invite.userId);
   logger.info(
     {
       inviteId: invite.id,
       type: invite.type,
       to: invite.email,
       organizationId: invite.organizationId,
-      href
+      href,
+      requiresPassword
     },
     "Delivering invite email"
   );
   try {
     if (invite.type === "ORG_ADMIN") {
-      const mail = orgAdminInviteEmail({ companyName: invite.organization.name, href });
+      const mail = orgAdminInviteEmail({ companyName: invite.organization.name, href, requiresPassword });
       await sendMail(invite.email, mail.subject, mail.html, mail.text);
     } else if (invite.type === "OFFICE_ADMIN") {
       const mail = officeAdminInviteEmail({
         companyName: invite.organization.name,
         officeNames: (await officeNamesFor(invite.officeIds)) || "assigned offices",
-        href
+        href,
+        requiresPassword
       });
       await sendMail(invite.email, mail.subject, mail.html, mail.text);
     } else {
-      const mail = employeeInviteEmail({ companyName: invite.organization.name, href });
+      const mail = employeeInviteEmail({ companyName: invite.organization.name, href, requiresPassword });
       await sendMail(invite.email, mail.subject, mail.html, mail.text);
     }
     logger.info({ inviteId: invite.id, to: invite.email, type: invite.type }, "Invite email delivered");
-    return { emailSent: true as const };
+    return { emailSent: true as const, requiresPassword };
   } catch (error) {
     const message = error instanceof AppError ? error.message : error instanceof Error ? error.message : "Could not send invite email";
     logger.error(
@@ -138,7 +141,7 @@ export async function deliverInvite(invite: Invite & { organization: { name: str
       },
       "Invite email was not sent"
     );
-    return { emailSent: false as const, emailError: message };
+    return { emailSent: false as const, emailError: message, requiresPassword };
   }
 }
 
@@ -213,9 +216,11 @@ export const inviteService = {
       throw new AppError(400, "PASSWORD_REQUIRED", "A password is required to activate this account");
     }
 
+    // Hash outside the DB transaction — argon2 is intentionally slow.
+    const passwordHash = needsPassword && password ? await argon2.hash(password, { type: argon2.argon2id }) : null;
+
     await prisma.$transaction(async (tx) => {
-      if (needsPassword && password) {
-        const passwordHash = await argon2.hash(password, { type: argon2.argon2id });
+      if (passwordHash) {
         await tx.user.update({
           where: { id: invite.userId! },
           data: { passwordHash, mustChangePassword: false, status: "ACTIVE" }

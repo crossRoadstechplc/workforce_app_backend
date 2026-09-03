@@ -204,11 +204,14 @@ export const platformService = {
         emailSent: delivery.emailSent,
         inviteId: result.invite.id,
         existingAccount: !result.created,
+        requiresPassword: delivery.requiresPassword,
         ...("emailError" in delivery ? { emailError: delivery.emailError } : {})
       };
     }
 
-    return result.created ? { user: result.user, temporaryPassword } : { user: result.user, existingAccount: true };
+    return result.created
+      ? { user: result.user, temporaryPassword, existingAccount: false as const }
+      : { user: result.user, existingAccount: true as const, requiresPassword: false as const };
   },
 
   async listOrgAdmins(input: { page: number; pageSize: number; organizationId?: string; search?: string; status?: "ACTIVE" | "INACTIVE" | "LOCKED" }) {

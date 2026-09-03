@@ -63,47 +63,81 @@ function layout(input: {
   };
 }
 
-export function orgAdminInviteEmail(input: { companyName: string; href: string }): MailContent {
+export function orgAdminInviteEmail(input: {
+  companyName: string;
+  href: string;
+  requiresPassword?: boolean;
+}): MailContent {
   const companyName = input.companyName;
+  const requiresPassword = input.requiresPassword !== false;
   return {
     subject: `${companyName} invited you as company administrator`,
     ...layout({
       title: `Join ${companyName}`,
-      introHtml: `You have been invited as company administrator for <strong>${escapeHtml(companyName)}</strong>. Open the link below to set your password and sign in.`,
-      introText: `You have been invited as company administrator for ${companyName}. Open the link below to set your password and sign in.`,
-      buttonLabel: "Set your password",
+      introHtml: requiresPassword
+        ? `You have been invited as company administrator for <strong>${escapeHtml(companyName)}</strong>. Open the link below to set your password and sign in.`
+        : `You have been invited as company administrator for <strong>${escapeHtml(companyName)}</strong>. You already have a Workforce account — open the link to confirm access, then sign in with your existing password.`,
+      introText: requiresPassword
+        ? `You have been invited as company administrator for ${companyName}. Open the link below to set your password and sign in.`
+        : `You have been invited as company administrator for ${companyName}. You already have a Workforce account — open the link to confirm access, then sign in with your existing password.`,
+      buttonLabel: requiresPassword ? "Set your password" : "Confirm access",
       href: input.href,
-      footer: "This link expires after a limited time. After you set a password, sign in to continue. If you were not expecting this email, you can ignore it."
+      footer: requiresPassword
+        ? "This link expires after a limited time. After you set a password, sign in to continue. If you were not expecting this email, you can ignore it."
+        : "This link expires after a limited time. Use your existing password to sign in. If you were not expecting this email, you can ignore it."
     })
   };
 }
 
-export function officeAdminInviteEmail(input: { companyName: string; officeNames: string; href: string }): MailContent {
+export function officeAdminInviteEmail(input: {
+  companyName: string;
+  officeNames: string;
+  href: string;
+  requiresPassword?: boolean;
+}): MailContent {
   const { companyName, officeNames } = input;
+  const requiresPassword = input.requiresPassword !== false;
   return {
     subject: `${companyName} invited you as office administrator`,
     ...layout({
       title: "Office administrator access",
-      introHtml: `You have been invited as office administrator for <strong>${escapeHtml(officeNames)}</strong> at <strong>${escapeHtml(companyName)}</strong>. Open the link below to set your password and sign in.`,
-      introText: `You have been invited as office administrator for ${officeNames} at ${companyName}. Open the link below to set your password and sign in.`,
-      buttonLabel: "Set your password",
+      introHtml: requiresPassword
+        ? `You have been invited as office administrator for <strong>${escapeHtml(officeNames)}</strong> at <strong>${escapeHtml(companyName)}</strong>. Open the link below to set your password and sign in.`
+        : `Office administrator access for <strong>${escapeHtml(officeNames)}</strong> at <strong>${escapeHtml(companyName)}</strong> was added to your existing Workforce account. Open the link to confirm, then sign in with your existing password and choose Office Admin.`,
+      introText: requiresPassword
+        ? `You have been invited as office administrator for ${officeNames} at ${companyName}. Open the link below to set your password and sign in.`
+        : `Office administrator access for ${officeNames} at ${companyName} was added to your existing Workforce account. Open the link to confirm, then sign in with your existing password and choose Office Admin.`,
+      buttonLabel: requiresPassword ? "Set your password" : "Confirm access",
       href: input.href,
-      footer: "This link expires after a limited time. After you set a password, sign in to continue. If you were not expecting this email, you can ignore it."
+      footer: requiresPassword
+        ? "This link expires after a limited time. After you set a password, sign in to continue. If you were not expecting this email, you can ignore it."
+        : "This link expires after a limited time. Use your existing password to sign in. If you were not expecting this email, you can ignore it."
     })
   };
 }
 
-export function employeeInviteEmail(input: { companyName: string; href: string }): MailContent {
+export function employeeInviteEmail(input: {
+  companyName: string;
+  href: string;
+  requiresPassword?: boolean;
+}): MailContent {
   const companyName = input.companyName;
+  const requiresPassword = input.requiresPassword !== false;
   return {
     subject: `${companyName} invited you to complete your employee profile`,
     ...layout({
       title: "Complete your employee profile",
-      introHtml: `<strong>${escapeHtml(companyName)}</strong> invited you to complete your employee profile. Open the form, enter your details, and choose a password to create your account.`,
-      introText: `${companyName} invited you to complete your employee profile. Open the form, enter your details, and choose a password to create your account.`,
-      buttonLabel: "Complete your profile",
+      introHtml: requiresPassword
+        ? `<strong>${escapeHtml(companyName)}</strong> invited you to complete your employee profile. Open the form, enter your details, and choose a password to create your account.`
+        : `<strong>${escapeHtml(companyName)}</strong> invited you to add an employee profile to your existing Workforce account. Open the form and enter your details — keep using your existing password.`,
+      introText: requiresPassword
+        ? `${companyName} invited you to complete your employee profile. Open the form, enter your details, and choose a password to create your account.`
+        : `${companyName} invited you to add an employee profile to your existing Workforce account. Open the form and enter your details — keep using your existing password.`,
+      buttonLabel: requiresPassword ? "Complete your profile" : "Continue",
       href: input.href,
-      footer: "This link expires after a limited time. After you finish, sign in with the employee app. If you were not expecting this email, you can ignore it."
+      footer: requiresPassword
+        ? "This link expires after a limited time. After you finish, sign in with the employee app. If you were not expecting this email, you can ignore it."
+        : "This link expires after a limited time. Sign in with your existing password. If you were not expecting this email, you can ignore it."
     })
   };
 }
