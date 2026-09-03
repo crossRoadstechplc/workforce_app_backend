@@ -127,6 +127,13 @@ export const authService = {
     await prisma.user.update({ where: { id: userId }, data: { lastLoginAt: new Date() } });
 
     const contexts = await getAvailableContexts(userId);
+    if (!contexts.length) {
+      throw new AppError(
+        403,
+        "NO_CONTEXT",
+        "This account has no usable login role yet. Ask an administrator to finish assigning organization or office access."
+      );
+    }
     const defaultContextKey = resolveDefaultContextKey(contexts, input.lastContextKey ?? input.contextKey ?? undefined);
 
     if (input.contextKey) {

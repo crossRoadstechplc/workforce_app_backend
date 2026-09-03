@@ -23,15 +23,15 @@ export type AuthContext = {
 };
 
 export function isSuperAdmin(auth?: AuthContext | null) {
-  return !!auth?.roles.includes(ROLE.SUPER_ADMIN);
+  return !!auth?.roles?.includes(ROLE.SUPER_ADMIN);
 }
 
 export function isOrgAdmin(auth?: AuthContext | null) {
-  return !!auth?.roles.some((r) => r === ROLE.ORG_ADMIN || r === "ADMIN");
+  return !!auth?.roles?.some((r) => r === ROLE.ORG_ADMIN || r === "ADMIN");
 }
 
 export function isOfficeAdmin(auth?: AuthContext | null) {
-  return !!auth?.roles.includes(ROLE.OFFICE_ADMIN);
+  return !!auth?.roles?.includes(ROLE.OFFICE_ADMIN);
 }
 
 export function isTenantAdmin(auth?: AuthContext | null) {

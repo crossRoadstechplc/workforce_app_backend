@@ -53,7 +53,7 @@ export function initializeSocket(server: HttpServer) {
       return;
     }
     socket.join(`user:${auth.userId}`);
-    for (const role of auth.roles) {
+    for (const role of auth.roles ?? []) {
       if (role === ROLE.SUPER_ADMIN) {
         socket.join(`role:${ROLE.SUPER_ADMIN}`);
       } else if (auth.organizationId) {
