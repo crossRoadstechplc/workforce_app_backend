@@ -2,7 +2,7 @@ import type { RequestHandler } from "express";
 import { prisma } from "../database/prisma.js";
 import { AppError } from "../shared/errors/app-error.js";
 import { verifyAccessToken } from "../modules/auth/token.service.js";
-import { isOrgAdmin, isSuperAdmin } from "../shared/tenancy.js";
+import { isOrgAdmin, isSuperAdmin, isTenantAdmin } from "../shared/tenancy.js";
 
 export const authenticate: RequestHandler = async (req, _res, next) => {
   const value = req.header("authorization");
@@ -58,6 +58,14 @@ export const requireOrgContext: RequestHandler = (req, _res, next) => {
 /** Company-level configuration (offices, schedules, office admins). */
 export const requireOrgAdmin: RequestHandler = (req, _res, next) => {
   if (!isOrgAdmin(req.auth)) return next(new AppError(403, "ORG_ADMIN_REQUIRED", "Company administrator access is required"));
+  next();
+};
+
+/** Org admin or office admin (tenant ops). */
+export const requireTenantAdmin: RequestHandler = (req, _res, next) => {
+  if (!isTenantAdmin(req.auth)) {
+    return next(new AppError(403, "TENANT_ADMIN_REQUIRED", "Company or office administrator access is required"));
+  }
   next();
 };
 

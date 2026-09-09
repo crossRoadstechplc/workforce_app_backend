@@ -16,7 +16,8 @@ export const orgAdminPermissions = [
   "display.manage",
   "chat.use",
   "notification.view", "report.view", "report.export", "audit.view",
-  "vault.manage"
+  "vault.manage",
+  "task_tracker.access", "task_tracker.manage"
 ];
 
 export const officeAdminPermissions = [
@@ -27,11 +28,13 @@ export const officeAdminPermissions = [
   "evaluation.view_office", "evaluation.review",
   "meeting.book", "meeting.view_own",
   "chat.use",
-  "notification.view", "report.view", "report.export", "audit.view"
+  "notification.view", "report.view", "report.export", "audit.view",
+  "task_tracker.access", "task_tracker.manage"
 ];
 
 export const platformPermissions = [
-  "organization.manage", "org_admin.manage", "platform.report.view", "audit.view"
+  "organization.manage", "org_admin.manage", "platform.report.view", "audit.view",
+  "task_tracker.manage"
 ];
 
 export const employeePermissions = [
@@ -41,7 +44,8 @@ export const employeePermissions = [
   "evaluation.view_own", "evaluation.submit_own",
   "meeting.book", "meeting.view_own",
   "chat.use",
-  "notification.view"
+  "notification.view",
+  "task_tracker.access"
 ];
 
 const allPermissionCodes = [...new Set([...orgAdminPermissions, ...officeAdminPermissions, ...platformPermissions, ...employeePermissions])];

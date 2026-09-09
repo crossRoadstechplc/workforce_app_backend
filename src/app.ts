@@ -36,6 +36,8 @@ import { tenantContextRouter } from "./modules/context/tenant-context.routes.js"
 import { adminInviteRouter, publicInviteRouter } from "./modules/invites/invite.routes.js";
 import { chatRouter } from "./modules/chat/chat.routes.js";
 import { vaultRouter } from "./modules/vault/vault.routes.js";
+import { taskTrackerRouter } from "./modules/task-tracker/routes.js";
+import { adminTaskTrackerRouter } from "./modules/task-tracker/admin.routes.js";
 
 export const app = express();
 app.disable("x-powered-by");
@@ -74,6 +76,8 @@ app.use("/api/v1/meetings", meetingRouter);
 app.use("/api/v1/display", displayRouter);
 app.use("/api/v1/notifications", notificationRouter);
 app.use("/api/v1/chat", chatRouter);
+app.use("/api/v1/task-tracker", taskTrackerRouter);
+app.use("/api/v1/admin/task-tracker", adminTaskTrackerRouter);
 app.use("/api/v1/admin/timesheets", adminTimesheetRouter);
 app.use("/api/v1/admin/attendance", adminAttendanceRosterRouter);
 app.use("/api/v1/admin/attendance/correctness-requests", adminAttendanceCorrectnessRouter);

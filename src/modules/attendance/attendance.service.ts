@@ -69,15 +69,6 @@ function validateCapturedAt(capturedAt: Date, serverTime: Date) {
 }
 
 async function geofence(input: LocationInput, office: { latitude: unknown; longitude: unknown; allowedRadiusMeters: number; maximumAccuracyMeters: number }) {
-  // Local/dev demos (Chrome, emulators) are rarely at the seeded office coords.
-  // Keep real geofencing in production; set ATTENDANCE_DEV_BYPASS_GEOFENCE=false to test it locally.
-  const bypass =
-    process.env.NODE_ENV !== "production" &&
-    process.env.ATTENDANCE_DEV_BYPASS_GEOFENCE !== "false";
-  if (bypass) {
-    return { distanceMeters: 0, insideRadius: true };
-  }
-
   if (input.accuracyMeters > office.maximumAccuracyMeters) throw new AppError(422, "LOCATION_ACCURACY_TOO_LOW", `Location accuracy must be within ${office.maximumAccuracyMeters} meters`);
   const rows = await prisma.$queryRaw<GeoResult[]>`
     SELECT

@@ -6,7 +6,7 @@ import type { BootstrapResult } from "./bootstrap.js";
 
 export function printManifest(bootstrap: BootstrapResult) {
   const demoPassword = process.env.SEED_DEMO_PASSWORD ?? "Demo123!";
-  const demoEnabled = process.env.SEED_DEMO_DATA !== "false";
+  const demoEnabled = process.env.SEED_DEMO_DATA === "true";
 
   const lines: string[] = [
     "# Seed credentials (generated — do not commit)",
@@ -36,7 +36,7 @@ export function printManifest(bootstrap: BootstrapResult) {
       );
     }
   } else {
-    lines.push("", "_Demo seed disabled (`SEED_DEMO_DATA=false`). Only bootstrap accounts above._");
+    lines.push("", "_Demo seed disabled (`SEED_DEMO_DATA` is not `true`). Only bootstrap accounts above._");
   }
 
   lines.push("", "## Quick flows", "");

@@ -23,7 +23,7 @@ SUPER_ADMIN
 
 - `INITIAL_ADMIN_EMAIL` / `INITIAL_ADMIN_PASSWORD` → platform `SUPER_ADMIN`
 
-### Demo fixture (`SEED_DEMO_DATA=true`, default in dev)
+### Demo fixture (`SEED_DEMO_DATA=true`, opt-in)
 
 All demo users share `SEED_DEMO_PASSWORD` (default `Demo123!`) with `mustChangePassword: false`.
 
@@ -31,7 +31,7 @@ Fixture source: [prisma/seed/data/demo.fixture.json](../prisma/seed/data/demo.fi
 
 After `npm run db:seed`, see **`prisma/seed/SEED_CREDENTIALS.md`** (gitignored).
 
-Disable demo tenants in production: `SEED_DEMO_DATA=false`
+Demo tenants are off by default. Enable only when needed: `SEED_DEMO_DATA=true`
 
 ## APIs
 

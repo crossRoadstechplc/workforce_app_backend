@@ -8,11 +8,11 @@ import { printManifest } from "./seed/manifest.js";
 async function main() {
   const bootstrapResult = await bootstrap();
 
-  if (process.env.SEED_DEMO_DATA !== "false") {
+  if (process.env.SEED_DEMO_DATA === "true") {
     const fixture = loadFixture();
     await seedDemo(fixture, bootstrapResult);
   } else {
-    console.log("SEED_DEMO_DATA=false — skipping fixture demo tenants");
+    console.log("SEED_DEMO_DATA is not true — skipping fixture demo tenants");
   }
 
   printManifest(bootstrapResult);

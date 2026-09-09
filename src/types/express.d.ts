@@ -30,6 +30,12 @@ declare global {
         boardMode: "ROOMS" | "PEOPLE" | "BOTH";
         permissions: string[];
       };
+      tracker?: {
+        workspaceId: string;
+        staffMemberId: string;
+        permissionRole: "Super Admin" | "Admin" | "Lead" | "Senior Staff" | "Junior Staff";
+        displayName: string;
+      };
     }
   }
 }

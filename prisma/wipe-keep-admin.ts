@@ -83,7 +83,7 @@ async function main() {
 
   console.log(`Deleted ${deletedUsers.count} non-platform user(s)`);
   console.log("Wipe complete. Roles/permissions and SUPER_ADMIN remain.");
-  console.log("Next: npm run db:seed  (set SEED_DEMO_DATA=false for admin-only, or omit it to load demo tenants)");
+  console.log("Next: npm run db:seed  (default is admin-only; set SEED_DEMO_DATA=true to load demo tenants)");
 }
 
 main()
