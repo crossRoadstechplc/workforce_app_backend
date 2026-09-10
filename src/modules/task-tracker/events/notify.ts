@@ -11,6 +11,62 @@ import {
 
 let listenClient: Client | null = null;
 let listenReady: Promise<void> | null = null;
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let listenerWanted = false;
+const RECONNECT_DELAY_MS = 2_000;
+
+function clearListenClient(client?: Client | null) {
+  if (client && listenClient === client) {
+    listenClient = null;
+    listenReady = null;
+  } else if (!client) {
+    listenClient = null;
+    listenReady = null;
+  }
+}
+
+function scheduleListenReconnect(reason: string, err?: unknown) {
+  if (!listenerWanted) return;
+  if (reconnectTimer) return;
+
+  logger.warn({ err }, `tt workspace LISTEN ${reason}; reconnecting`);
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    void ensureListenClient().catch((error) => {
+      logger.warn({ err: error }, "tt workspace LISTEN reconnect failed");
+      scheduleListenReconnect("retry");
+    });
+  }, RECONNECT_DELAY_MS);
+  reconnectTimer.unref?.();
+}
+
+function attachListenClientHandlers(client: Client) {
+  client.on("notification", (msg) => {
+    if (!msg.payload) return;
+    try {
+      const event = JSON.parse(msg.payload) as WorkspaceEventPayload;
+      fanOut(event);
+    } catch {
+      // ignore malformed payloads
+    }
+  });
+
+  client.on("error", (error) => {
+    // Prevent unhandled 'error' from crashing the process (pg Client).
+    clearListenClient(client);
+    try {
+      client.end().catch(() => undefined);
+    } catch {
+      // ignore
+    }
+    scheduleListenReconnect("connection error", error);
+  });
+
+  client.on("end", () => {
+    clearListenClient(client);
+    scheduleListenReconnect("connection closed");
+  });
+}
 
 export async function bumpWorkspaceRevision(workspaceId: string): Promise<number> {
   const updated = await prisma.ttWorkspace.update({
@@ -58,39 +114,46 @@ export async function publishWorkspaceEvent(
 async function ensureListenClient(): Promise<Client> {
   if (listenClient && listenReady) {
     await listenReady;
+    if (!listenClient) {
+      throw new Error("tt workspace LISTEN client disconnected during connect");
+    }
     return listenClient;
   }
 
-  listenClient = new Client({ connectionString: env.DATABASE_URL });
-  listenReady = listenClient
+  const client = new Client({ connectionString: env.DATABASE_URL });
+  listenClient = client;
+  attachListenClientHandlers(client);
+
+  listenReady = client
     .connect()
     .then(async () => {
-      await listenClient!.query(`LISTEN ${NOTIFY_CHANNEL}`);
-      listenClient!.on("notification", (msg) => {
-        if (!msg.payload) return;
-        try {
-          const event = JSON.parse(msg.payload) as WorkspaceEventPayload;
-          fanOut(event);
-        } catch {
-          // ignore malformed payloads
-        }
-      });
+      await client.query(`LISTEN ${NOTIFY_CHANNEL}`);
+      logger.info("tt workspace LISTEN connected");
     })
     .catch((error) => {
-      listenClient = null;
-      listenReady = null;
+      clearListenClient(client);
+      try {
+        client.end().catch(() => undefined);
+      } catch {
+        // ignore
+      }
       throw error;
     });
 
   await listenReady;
+  if (!listenClient) {
+    throw new Error("tt workspace LISTEN client disconnected during connect");
+  }
   return listenClient;
 }
 
 export async function startWorkspaceListener(): Promise<void> {
+  listenerWanted = true;
   try {
     await ensureListenClient();
   } catch (error) {
     logger.warn({ err: error }, "tt workspace LISTEN unavailable; using in-process fan-out only");
+    scheduleListenReconnect("initial connect failed", error);
   }
 }
 
