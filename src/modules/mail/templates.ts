@@ -136,8 +136,8 @@ export function employeeInviteEmail(input: {
       buttonLabel: requiresPassword ? "Complete your profile" : "Continue",
       href: input.href,
       footer: requiresPassword
-        ? "This link expires after a limited time. After you finish, sign in with the employee app. If you were not expecting this email, you can ignore it."
-        : "This link expires after a limited time. Sign in with your existing password. If you were not expecting this email, you can ignore it."
+        ? "This link expires after a limited time. After you finish, you can open the employee app, get it from the store, or continue on the web. If you were not expecting this email, you can ignore it."
+        : "This link expires after a limited time. Sign in with your existing password in the employee app or on the web. If you were not expecting this email, you can ignore it."
     })
   };
 }

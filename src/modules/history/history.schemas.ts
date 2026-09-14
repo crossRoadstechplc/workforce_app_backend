@@ -6,3 +6,15 @@ export const idSchema = z.object({ params: z.object({ id: z.string().uuid() }) }
 export const adminTimesheetListSchema = z.object({ query: z.object({ ...page, employeeId: z.string().uuid().optional(), officeId: z.string().uuid().optional(), status: z.enum(["OPEN","PRESENT_ON_TIME","PRESENT_LATE","COMPLETED_ON_TIME","COMPLETED_LATE","MISSING_CHECKOUT"]).optional(), from: z.coerce.date().optional(), to: z.coerce.date().optional() }) });
 export const correctionSchema = z.object({ params: z.object({ id: z.string().uuid() }), body: z.object({ actualCheckIn: z.coerce.date().optional(), actualCheckOut: z.coerce.date().optional(), reason: z.string().trim().min(5).max(1000) }).refine(v => v.actualCheckIn || v.actualCheckOut, "At least one corrected time is required") });
 export const worksheetReviewSchema = z.object({ params: z.object({ id: z.string().uuid() }), body: z.object({ adminComment: z.string().trim().min(2).max(2000).optional() }) });
+export const createWorksheetSchema = z.object({
+  body: z.object({
+    timesheetId: z.string().uuid(),
+    workDescription: z.string().trim().min(1).max(5000)
+  })
+});
+export const updateWorksheetSchema = z.object({
+  params: z.object({ id: z.string().uuid() }),
+  body: z.object({
+    workDescription: z.string().trim().min(1).max(5000)
+  })
+});

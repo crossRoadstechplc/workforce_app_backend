@@ -11,6 +11,7 @@ import {
   attendanceDayRoster,
   attendanceMonthSummary,
   correctTimesheet,
+  createMyWorksheet,
   leaveDayRoster,
   myTimesheet,
   myTimesheetCalendar,
@@ -19,14 +20,17 @@ import {
   myWorksheetCalendar,
   myWorksheets,
   reviewWorksheet,
+  updateMyWorksheet,
   worksheetDayRoster
 } from "./history.controller.js";
 import {
   adminTimesheetListSchema,
   calendarSchema,
   correctionSchema,
+  createWorksheetSchema,
   employeeHistorySchema,
   idSchema,
+  updateWorksheetSchema,
   worksheetReviewSchema
 } from "./history.schemas.js";
 import {
@@ -46,6 +50,8 @@ export const worksheetHistoryRouter = Router();
 worksheetHistoryRouter.use(authenticate, requireNormalSession);
 worksheetHistoryRouter.get("/", requirePermission("worksheet.view_own"), validate(employeeHistorySchema), myWorksheets);
 worksheetHistoryRouter.get("/calendar", requirePermission("worksheet.view_own"), validate(calendarSchema), myWorksheetCalendar);
+worksheetHistoryRouter.post("/", requirePermission("worksheet.create"), validate(createWorksheetSchema), createMyWorksheet);
+worksheetHistoryRouter.patch("/:id", requirePermission("worksheet.create"), validate(updateWorksheetSchema), updateMyWorksheet);
 worksheetHistoryRouter.get("/:id", requirePermission("worksheet.view_own"), validate(idSchema), myWorksheet);
 
 export const adminTimesheetRouter = Router();

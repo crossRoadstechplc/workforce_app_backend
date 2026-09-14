@@ -9,7 +9,7 @@ import { formatWorkDateKey, todayWorkDate, todayWorkDateKey, workDateFromKey } f
 
 type LocationInput = { latitude: number; longitude: number; accuracyMeters: number; capturedAt: Date };
 type CheckInInput = LocationInput & { idempotencyKey: string; photoUrl?: string; lateReasonType?: string; lateReasonDescription?: string };
-type CheckOutInput = LocationInput & { idempotencyKey: string; workDescription: string; photoUrl?: string };
+type CheckOutInput = LocationInput & { idempotencyKey: string; workDescription?: string; photoUrl?: string };
 
 type GeoResult = { distance_meters: number; inside_radius: boolean };
 
@@ -303,6 +303,9 @@ export const attendanceService = {
     const completedStatus = open.isLate ? "COMPLETED_LATE" : "COMPLETED_ON_TIME";
     const closedCarriedOverShift = formatWorkDateKey(open.workDate) < todayWorkDateKey(open.timezone);
 
+    const workDescription = input.workDescription?.trim();
+    const createWorksheet = Boolean(workDescription);
+
     const result = await prisma.$transaction(async (tx) => {
       const current = await tx.timesheet.findUnique({ where: { id: open.id } });
       if (!current?.isOpen) throw new AppError(409, "TIMESHEET_ALREADY_CLOSED", "Timesheet is already closed");
@@ -318,7 +321,9 @@ export const attendanceService = {
           status: metrics.isMissingCheckout || open.isMissingCheckout ? "MISSING_CHECKOUT" : completedStatus,
           checkOutIdempotencyKey: input.idempotencyKey,
           locations: { create: { type: "CHECK_OUT", latitude: input.latitude, longitude: input.longitude, accuracyMeters: input.accuracyMeters, distanceFromOfficeMeters: geo.distanceMeters, allowedRadiusMeters: open.officeAllowedRadiusMeters, isInsideRadius: true, capturedAt: input.capturedAt, serverReceivedAt: now, photoUrl: input.photoUrl ?? null } },
-          worksheet: { create: { employeeId: employee.id, workDate: open.workDate, workDescription: input.workDescription, submittedAt: now } }
+          ...(createWorksheet
+            ? { worksheet: { create: { employeeId: employee.id, workDate: open.workDate, workDescription: workDescription!, submittedAt: now } } }
+            : {})
         }, include: { worksheet: true, lateReason: true, locations: true }
       });
       const notification = await tx.notification.create({

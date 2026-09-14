@@ -49,6 +49,20 @@ export const myWorksheetCalendar: RequestHandler = async (req, res, next) => {
     next(e);
   }
 };
+export const createMyWorksheet: RequestHandler = async (req, res, next) => {
+  try {
+    res.status(201).json({ data: await historyService.createMyWorksheet(req.auth!.userId, req.body) });
+  } catch (e) {
+    next(e);
+  }
+};
+export const updateMyWorksheet: RequestHandler = async (req, res, next) => {
+  try {
+    res.json({ data: await historyService.updateMyWorksheet(req.auth!.userId, paramId(req.params.id!), req.body) });
+  } catch (e) {
+    next(e);
+  }
+};
 export const adminTimesheets: RequestHandler = async (req, res, next) => {
   try {
     const scope = getOfficeScope(req.auth);

@@ -106,6 +106,51 @@ export const historyService = {
     if (!item) throw new AppError(404, "WORKSHEET_NOT_FOUND", "Worksheet not found");
     return withFormattedWorkDate(item);
   },
+  async createMyWorksheet(userId: string, input: { timesheetId: string; workDescription: string }) {
+    const e = await employeeForUser(userId);
+    const timesheet = await prisma.timesheet.findFirst({
+      where: { id: input.timesheetId, employeeId: e.id },
+      include: { worksheet: true }
+    });
+    if (!timesheet) throw new AppError(404, "TIMESHEET_NOT_FOUND", "Timesheet not found");
+    if (timesheet.isOpen) {
+      throw new AppError(409, "TIMESHEET_STILL_OPEN", "Worksheet can only be added after checkout");
+    }
+    if (timesheet.worksheet) {
+      throw new AppError(409, "WORKSHEET_EXISTS", "A worksheet already exists for this timesheet");
+    }
+    const now = new Date();
+    const created = await prisma.worksheet.create({
+      data: {
+        timesheetId: timesheet.id,
+        employeeId: e.id,
+        workDate: timesheet.workDate,
+        workDescription: input.workDescription.trim(),
+        submittedAt: now,
+        status: "SUBMITTED"
+      },
+      include: { timesheet: { select: { actualCheckIn: true, actualCheckOut: true, workedMinutes: true, status: true } } }
+    });
+    return withFormattedWorkDate(created);
+  },
+  async updateMyWorksheet(userId: string, id: string, input: { workDescription: string }) {
+    const e = await employeeForUser(userId);
+    const current = await prisma.worksheet.findFirst({ where: { id, employeeId: e.id } });
+    if (!current) throw new AppError(404, "WORKSHEET_NOT_FOUND", "Worksheet not found");
+    const updated = await prisma.worksheet.update({
+      where: { id },
+      data: {
+        workDescription: input.workDescription.trim(),
+        status: "SUBMITTED",
+        submittedAt: new Date(),
+        reviewedBy: null,
+        reviewedAt: null,
+        adminComment: null
+      },
+      include: { timesheet: { select: { actualCheckIn: true, actualCheckOut: true, workedMinutes: true, status: true } } }
+    });
+    return withFormattedWorkDate(updated);
+  },
   async adminTimesheets(organizationId: string, input: any, scope: OfficeScope) {
     const where = {
       employee: { organizationId, ...employeeOfficeFilter(scope, input.officeId) },

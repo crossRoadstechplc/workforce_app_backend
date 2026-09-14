@@ -26,7 +26,8 @@ export const checkInSchema = z.object({ body: z.object({
 export const checkOutSchema = z.object({ body: z.object({
   ...location,
   idempotencyKey: z.string().uuid(),
-  workDescription: z.string().trim().min(20).max(5000),
+  /** Optional — omit or leave empty to check out without a worksheet. */
+  workDescription: z.string().trim().max(5000).optional(),
   photoUrl: photoUrl
 }) });
 export const attendanceConfigUpdateSchema = z.object({
