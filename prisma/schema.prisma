@@ -44,6 +44,11 @@ enum AttendanceLocationType {
   CHECK_OUT
 }
 
+enum AttendanceLocationSource {
+  GPS
+  DESKTOP
+}
+
 enum WorksheetStatus {
   SUBMITTED
   REVIEWED
@@ -213,7 +218,8 @@ model Organization {
   name                    String
   slug                    String                     @unique
   isActive                Boolean                    @default(true) @map("is_active")
-  attendancePhotoRequired Boolean                    @default(true) @map("attendance_photo_required")
+  attendancePhotoRequired         Boolean                    @default(true) @map("attendance_photo_required")
+  attendanceDesktopSkipLocation   Boolean                    @default(true) @map("attendance_desktop_skip_location")
   createdAt               DateTime                   @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt               DateTime                   @updatedAt @map("updated_at") @db.Timestamptz(6)
   memberships OrganizationMembership[]
@@ -587,20 +593,21 @@ model Timesheet {
 }
 
 model AttendanceLocation {
-  id                       String                 @id @default(uuid()) @db.Uuid
-  timesheetId              String                 @map("timesheet_id") @db.Uuid
+  id                       String                     @id @default(uuid()) @db.Uuid
+  timesheetId              String                     @map("timesheet_id") @db.Uuid
   type                     AttendanceLocationType
-  latitude                 Decimal                @db.Decimal(10, 7)
-  longitude                Decimal                @db.Decimal(10, 7)
-  accuracyMeters           Decimal                @map("accuracy_meters") @db.Decimal(8, 2)
-  distanceFromOfficeMeters Decimal                @map("distance_from_office_meters") @db.Decimal(10, 2)
-  allowedRadiusMeters      Int                    @map("allowed_radius_meters")
-  isInsideRadius           Boolean                @map("is_inside_radius")
-  capturedAt               DateTime               @map("captured_at") @db.Timestamptz(6)
-  serverReceivedAt         DateTime               @map("server_received_at") @db.Timestamptz(6)
-  photoUrl                 String?                @map("photo_url")
-  createdAt                DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
-  timesheet                Timesheet              @relation(fields: [timesheetId], references: [id], onDelete: Cascade)
+  source                   AttendanceLocationSource   @default(GPS)
+  latitude                 Decimal?                   @db.Decimal(10, 7)
+  longitude                Decimal?                   @db.Decimal(10, 7)
+  accuracyMeters           Decimal?                   @map("accuracy_meters") @db.Decimal(8, 2)
+  distanceFromOfficeMeters Decimal?                   @map("distance_from_office_meters") @db.Decimal(10, 2)
+  allowedRadiusMeters      Int                        @map("allowed_radius_meters")
+  isInsideRadius           Boolean                    @map("is_inside_radius")
+  capturedAt               DateTime?                  @map("captured_at") @db.Timestamptz(6)
+  serverReceivedAt         DateTime                   @map("server_received_at") @db.Timestamptz(6)
+  photoUrl                 String?                    @map("photo_url")
+  createdAt                DateTime                   @default(now()) @map("created_at") @db.Timestamptz(6)
+  timesheet                Timesheet                  @relation(fields: [timesheetId], references: [id], onDelete: Cascade)
   @@index([timesheetId, type])
   @@map("attendance_locations")
 }

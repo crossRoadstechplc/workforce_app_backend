@@ -38,6 +38,7 @@ import { chatRouter } from "./modules/chat/chat.routes.js";
 import { vaultRouter } from "./modules/vault/vault.routes.js";
 import { taskTrackerRouter } from "./modules/task-tracker/routes.js";
 import { adminTaskTrackerRouter } from "./modules/task-tracker/admin.routes.js";
+import { appVersionRouter } from "./modules/app-version/app-version.routes.js";
 
 export const app = express();
 app.disable("x-powered-by");
@@ -56,6 +57,7 @@ app.use(rateLimit({
   skip: (req) => req.method === "OPTIONS"
 }));
 app.get("/api/v1/health", (_req, res) => res.json({ status: "ok", timestamp: new Date().toISOString() }));
+app.use("/api/v1/app", appVersionRouter);
 app.use("/api/v1/auth", authRouter);
 app.use("/api/v1/invites", publicInviteRouter);
 app.use("/api/v1/admin/invites", adminInviteRouter);

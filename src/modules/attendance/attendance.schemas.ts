@@ -1,12 +1,20 @@
 import { z } from "zod";
-const location = {
-  latitude: z.number().min(-90).max(90),
-  longitude: z.number().min(-180).max(180),
-  accuracyMeters: z.number().positive().max(10_000),
-  capturedAt: z.coerce.date()
+
+const clientChannel = z.enum(["MOBILE", "DESKTOP"]);
+const locationFields = {
+  latitude: z.number().min(-90).max(90).optional(),
+  longitude: z.number().min(-180).max(180).optional(),
+  accuracyMeters: z.number().positive().max(10_000).optional(),
+  capturedAt: z.coerce.date().optional()
 };
 const photoUrl = z.string().url().max(2048).optional();
-export const previewCheckInSchema = z.object({ body: z.object(location) });
+
+export const previewCheckInSchema = z.object({
+  body: z.object({
+    clientChannel,
+    ...locationFields
+  })
+});
 export const uploadAttendancePhotoSchema = z.object({
   body: z.object({
     purpose: z.enum(["CHECK_IN", "CHECK_OUT"]),
@@ -15,7 +23,8 @@ export const uploadAttendancePhotoSchema = z.object({
   })
 });
 export const checkInSchema = z.object({ body: z.object({
-  ...location,
+  clientChannel,
+  ...locationFields,
   idempotencyKey: z.string().uuid(),
   photoUrl: photoUrl,
   lateReasonType: z.enum(["TRAFFIC","TRANSPORTATION","HEALTH","FAMILY_EMERGENCY","WEATHER","OTHER"]).optional(),
@@ -24,7 +33,8 @@ export const checkInSchema = z.object({ body: z.object({
   if (value.lateReasonType === "OTHER" && !value.lateReasonDescription) ctx.addIssue({ code: "custom", path: ["lateReasonDescription"], message: "Description is required for OTHER" });
 }) });
 export const checkOutSchema = z.object({ body: z.object({
-  ...location,
+  clientChannel,
+  ...locationFields,
   idempotencyKey: z.string().uuid(),
   /** Optional — omit or leave empty to check out without a worksheet. */
   workDescription: z.string().trim().max(5000).optional(),
@@ -32,6 +42,9 @@ export const checkOutSchema = z.object({ body: z.object({
 }) });
 export const attendanceConfigUpdateSchema = z.object({
   body: z.object({
-    photoRequiredEnabled: z.boolean()
+    photoRequiredEnabled: z.boolean().optional(),
+    desktopSkipLocationEnabled: z.boolean().optional()
+  }).refine((value) => value.photoRequiredEnabled !== undefined || value.desktopSkipLocationEnabled !== undefined, {
+    message: "At least one attendance setting is required"
   })
 });

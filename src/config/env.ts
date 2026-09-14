@@ -48,7 +48,21 @@ const schema = z.object({
   VAULT_ENCRYPTION_KEY: z.string().regex(/^[0-9a-fA-F]{64}$/, "VAULT_ENCRYPTION_KEY must be 64 hex characters").default(
     "a1b2c3d4e5f60718293a4b5c6d7e8f90112233445566778899aabbccddeeff00"
   ),
-  VAULT_TOKEN_TTL_MINUTES: z.coerce.number().int().positive().default(15)
+  VAULT_TOKEN_TTL_MINUTES: z.coerce.number().int().positive().default(15),
+  ANDROID_APP_VERSION: z.string().min(1).default("1.0.0"),
+  ANDROID_FORCE_UPDATE: z.preprocess((value) => {
+    if (typeof value === "boolean") return value;
+    if (typeof value === "string") {
+      const normalized = value.trim().toLowerCase();
+      if (["true", "1", "yes"].includes(normalized)) return true;
+      if (["false", "0", "no", ""].includes(normalized)) return false;
+    }
+    return false;
+  }, z.boolean().default(false)),
+  ANDROID_RELEASE_URL: z.preprocess(
+    (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+    z.string().url().optional()
+  )
 });
 
 export const env = schema.parse(process.env);

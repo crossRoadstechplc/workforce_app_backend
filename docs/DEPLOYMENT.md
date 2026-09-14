@@ -30,6 +30,11 @@ pm2 startup                   # print the boot command, run it once as root
 `VAULT_ENCRYPTION_KEY` (64 hex characters). SMTP, Cloudinary and Firebase are
 optional but the invite, attendance-photo and push features stay off without them.
 
+Employee Android updates are controlled by `ANDROID_APP_VERSION`,
+`ANDROID_FORCE_UPDATE`, and `ANDROID_RELEASE_URL` (usually a GitHub Release APK
+URL). Change those and `npm run pm2:reload` — no database migration. The app
+calls public `GET /api/v1/app/version`.
+
 ## Admin seed
 
 `npm run db:seed:admin` creates roles, permissions and a **single**

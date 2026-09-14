@@ -7,9 +7,20 @@ import { emitToOfficeDisplay, emitToOrgAdmins, emitToOrgRole, emitToUser } from 
 import { ROLE } from "../../shared/tenancy.js";
 import { formatWorkDateKey, todayWorkDate, todayWorkDateKey, workDateFromKey } from "../../shared/work-date.js";
 
-type LocationInput = { latitude: number; longitude: number; accuracyMeters: number; capturedAt: Date };
-type CheckInInput = LocationInput & { idempotencyKey: string; photoUrl?: string; lateReasonType?: string; lateReasonDescription?: string };
-type CheckOutInput = LocationInput & { idempotencyKey: string; workDescription?: string; photoUrl?: string };
+type ClientChannel = "MOBILE" | "DESKTOP";
+type GpsFix = { latitude: number; longitude: number; accuracyMeters: number; capturedAt: Date };
+type AttendanceActionInput = {
+  clientChannel: ClientChannel;
+  latitude?: number;
+  longitude?: number;
+  accuracyMeters?: number;
+  capturedAt?: Date;
+};
+type CheckInInput = AttendanceActionInput & { idempotencyKey: string; photoUrl?: string; lateReasonType?: string; lateReasonDescription?: string };
+type CheckOutInput = AttendanceActionInput & { idempotencyKey: string; workDescription?: string; photoUrl?: string };
+type Presence =
+  | { source: "GPS"; fix: GpsFix; geo: { distanceMeters: number; insideRadius: boolean } }
+  | { source: "DESKTOP"; fix: null; geo: { distanceMeters: null; insideRadius: true } };
 
 type GeoResult = { distance_meters: number; inside_radius: boolean };
 
@@ -68,7 +79,86 @@ function validateCapturedAt(capturedAt: Date, serverTime: Date) {
   if (ageMs > 5 * 60_000 || ageMs < -2 * 60_000) throw new AppError(422, "STALE_LOCATION", "Location must be captured near the time of the attendance request");
 }
 
-async function geofence(input: LocationInput, office: { latitude: unknown; longitude: unknown; allowedRadiusMeters: number; maximumAccuracyMeters: number }) {
+function gpsFixFrom(input: AttendanceActionInput): GpsFix | null {
+  if (input.latitude == null || input.longitude == null || input.accuracyMeters == null || input.capturedAt == null) {
+    return null;
+  }
+  return {
+    latitude: input.latitude,
+    longitude: input.longitude,
+    accuracyMeters: input.accuracyMeters,
+    capturedAt: input.capturedAt
+  };
+}
+
+async function desktopSkipEnabled(organizationId: string) {
+  const org = await prisma.organization.findUnique({
+    where: { id: organizationId },
+    select: { attendanceDesktopSkipLocation: true }
+  });
+  return org?.attendanceDesktopSkipLocation ?? true;
+}
+
+function locationIsRequired(channel: ClientChannel, skipEnabled: boolean) {
+  return channel === "MOBILE" || !skipEnabled;
+}
+
+async function resolvePresence(
+  input: AttendanceActionInput,
+  office: { latitude: unknown; longitude: unknown; allowedRadiusMeters: number; maximumAccuracyMeters: number },
+  organizationId: string,
+  now: Date
+): Promise<Presence> {
+  const skipEnabled = await desktopSkipEnabled(organizationId);
+  const required = locationIsRequired(input.clientChannel, skipEnabled);
+  const fix = gpsFixFrom(input);
+  if (required) {
+    if (!fix) throw new AppError(422, "LOCATION_REQUIRED", "Location is required to check in or out from this device");
+    validateCapturedAt(fix.capturedAt, now);
+    const geo = await geofence(fix, office);
+    return { source: "GPS", fix, geo };
+  }
+  return { source: "DESKTOP", fix: null, geo: { distanceMeters: null, insideRadius: true } };
+}
+
+function locationCreate(
+  presence: Presence,
+  type: "CHECK_IN" | "CHECK_OUT",
+  allowedRadiusMeters: number,
+  now: Date,
+  photoUrl?: string | null
+) {
+  if (presence.source === "DESKTOP") {
+    return {
+      type,
+      source: "DESKTOP" as const,
+      latitude: null,
+      longitude: null,
+      accuracyMeters: null,
+      distanceFromOfficeMeters: null,
+      allowedRadiusMeters,
+      isInsideRadius: true,
+      capturedAt: null,
+      serverReceivedAt: now,
+      photoUrl: photoUrl ?? null
+    };
+  }
+  return {
+    type,
+    source: "GPS" as const,
+    latitude: presence.fix.latitude,
+    longitude: presence.fix.longitude,
+    accuracyMeters: presence.fix.accuracyMeters,
+    distanceFromOfficeMeters: presence.geo.distanceMeters,
+    allowedRadiusMeters,
+    isInsideRadius: true,
+    capturedAt: presence.fix.capturedAt,
+    serverReceivedAt: now,
+    photoUrl: photoUrl ?? null
+  };
+}
+
+async function geofence(input: GpsFix, office: { latitude: unknown; longitude: unknown; allowedRadiusMeters: number; maximumAccuracyMeters: number }) {
   if (input.accuracyMeters > office.maximumAccuracyMeters) throw new AppError(422, "LOCATION_ACCURACY_TOO_LOW", `Location accuracy must be within ${office.maximumAccuracyMeters} meters`);
   const rows = await prisma.$queryRaw<GeoResult[]>`
     SELECT
@@ -196,12 +286,14 @@ export const attendanceService = {
   async officeContext(userId: string) {
     const employee = await activeEmployee(userId);
     const photoRequired = await attendancePhotoService.isRequiredForOrganization(employee.organizationId);
+    const desktopSkipLocationEnabled = await desktopSkipEnabled(employee.organizationId);
     if (!employee.office || !employee.office.isActive) {
       return {
         assigned: false as const,
         reason: "OFFICE_NOT_ASSIGNED" as const,
         message: "No office has been assigned to your profile yet. Contact your administrator.",
-        photoRequired
+        photoRequired,
+        desktopSkipLocationEnabled
       };
     }
     if (!employee.schedule || !employee.schedule.isActive) {
@@ -209,7 +301,8 @@ export const attendanceService = {
         assigned: false as const,
         reason: "SCHEDULE_NOT_ASSIGNED" as const,
         message: "No work schedule has been assigned to your profile yet. Contact your administrator.",
-        photoRequired
+        photoRequired,
+        desktopSkipLocationEnabled
       };
     }
     const office = employee.office;
@@ -223,20 +316,28 @@ export const attendanceService = {
       allowedRadiusMeters: office.allowedRadiusMeters,
       maximumAccuracyMeters: office.maximumAccuracyMeters,
       timezone: office.timezone || employee.schedule!.timezone,
-      photoRequired
+      photoRequired,
+      desktopSkipLocationEnabled
     };
   },
 
-  async preview(userId: string, input: LocationInput) {
+  async preview(userId: string, input: AttendanceActionInput) {
     const employee = await employeeContext(userId);
     const open = await prisma.timesheet.findFirst({ where: { employeeId: employee.id, isOpen: true }, select: { id: true } });
     if (open) throw new AppError(409, "ALREADY_CHECKED_IN", "Close your open shift with checkout before checking in again");
     const now = new Date();
-    validateCapturedAt(input.capturedAt, now);
     const clock = attendanceClock(employee, now);
     await assertNotOnApprovedLeave(employee.id, clock.workDate);
-    const geo = await geofence(input, employee.office!);
-    return { ...geo, isLate: clock.isLate, lateMinutes: clock.lateMinutes, requiresLateReason: clock.isLate, workDate: clock.workDate, serverTime: now };
+    const presence = await resolvePresence(input, employee.office!, employee.organizationId, now);
+    return {
+      insideRadius: presence.geo.insideRadius,
+      distanceMeters: presence.geo.distanceMeters ?? 0,
+      isLate: clock.isLate,
+      lateMinutes: clock.lateMinutes,
+      requiresLateReason: clock.isLate,
+      workDate: clock.workDate,
+      serverTime: now
+    };
   },
 
   async checkIn(userId: string, input: CheckInInput) {
@@ -247,11 +348,10 @@ export const attendanceService = {
       return formatTimesheetResponse(existing)!;
     }
     const now = new Date();
-    validateCapturedAt(input.capturedAt, now);
     const clock = attendanceClock(employee, now);
     await assertNotOnApprovedLeave(employee.id, clock.workDate);
-    const geo = await geofence(input, employee.office!);
-    if (!geo.insideRadius) throw new AppError(422, "OUTSIDE_OFFICE_RADIUS", "Check-in is outside the allowed office radius");
+    const presence = await resolvePresence(input, employee.office!, employee.organizationId, now);
+    if (!presence.geo.insideRadius) throw new AppError(422, "OUTSIDE_OFFICE_RADIUS", "Check-in is outside the allowed office radius");
     if (clock.isLate && !input.lateReasonType) throw new AppError(422, "LATE_REASON_REQUIRED", "A late reason is required");
     if (!clock.isLate && (input.lateReasonType || input.lateReasonDescription)) throw new AppError(422, "LATE_REASON_NOT_ALLOWED", "A late reason is only accepted for late check-in");
     await attendancePhotoService.validatePhotoUrl(employee.organizationId, input.photoUrl);
@@ -271,7 +371,7 @@ export const attendanceService = {
           officeLatitude: employee.office!.latitude, officeLongitude: employee.office!.longitude,
           officeAllowedRadiusMeters: employee.office!.allowedRadiusMeters, officeMaximumAccuracyMeters: employee.office!.maximumAccuracyMeters,
           timezone: clock.zone,
-          locations: { create: { type: "CHECK_IN", latitude: input.latitude, longitude: input.longitude, accuracyMeters: input.accuracyMeters, distanceFromOfficeMeters: geo.distanceMeters, allowedRadiusMeters: employee.office!.allowedRadiusMeters, isInsideRadius: true, capturedAt: input.capturedAt, serverReceivedAt: now, photoUrl: input.photoUrl ?? null } },
+          locations: { create: locationCreate(presence, "CHECK_IN", employee.office!.allowedRadiusMeters, now, input.photoUrl) },
           ...(clock.isLate ? { lateReason: { create: { employeeId: employee.id, reasonType: input.lateReasonType!, reasonDescription: input.lateReasonDescription, submittedAt: now } } } : {})
         }, include: { lateReason: true, locations: true }
       });
@@ -295,9 +395,8 @@ export const attendanceService = {
     const open = await prisma.timesheet.findFirst({ where: { employeeId: employee.id, isOpen: true } });
     if (!open) throw new AppError(409, "NO_OPEN_TIMESHEET", "No open timesheet exists");
     const now = new Date();
-    validateCapturedAt(input.capturedAt, now);
-    const geo = await geofence(input, { latitude: open.officeLatitude, longitude: open.officeLongitude, allowedRadiusMeters: open.officeAllowedRadiusMeters, maximumAccuracyMeters: open.officeMaximumAccuracyMeters });
-    if (!geo.insideRadius) throw new AppError(422, "OUTSIDE_OFFICE_RADIUS", "Checkout is outside the allowed office radius");
+    const presence = await resolvePresence(input, { latitude: open.officeLatitude, longitude: open.officeLongitude, allowedRadiusMeters: open.officeAllowedRadiusMeters, maximumAccuracyMeters: open.officeMaximumAccuracyMeters }, employee.organizationId, now);
+    if (!presence.geo.insideRadius) throw new AppError(422, "OUTSIDE_OFFICE_RADIUS", "Checkout is outside the allowed office radius");
     await attendancePhotoService.validatePhotoUrl(employee.organizationId, input.photoUrl);
     const metrics = computeCheckoutMetrics(open, now);
     const completedStatus = open.isLate ? "COMPLETED_LATE" : "COMPLETED_ON_TIME";
@@ -320,7 +419,7 @@ export const attendanceService = {
           isOpen: false,
           status: metrics.isMissingCheckout || open.isMissingCheckout ? "MISSING_CHECKOUT" : completedStatus,
           checkOutIdempotencyKey: input.idempotencyKey,
-          locations: { create: { type: "CHECK_OUT", latitude: input.latitude, longitude: input.longitude, accuracyMeters: input.accuracyMeters, distanceFromOfficeMeters: geo.distanceMeters, allowedRadiusMeters: open.officeAllowedRadiusMeters, isInsideRadius: true, capturedAt: input.capturedAt, serverReceivedAt: now, photoUrl: input.photoUrl ?? null } },
+          locations: { create: locationCreate(presence, "CHECK_OUT", open.officeAllowedRadiusMeters, now, input.photoUrl) },
           ...(createWorksheet
             ? { worksheet: { create: { employeeId: employee.id, workDate: open.workDate, workDescription: workDescription!, submittedAt: now } } }
             : {})
@@ -350,32 +449,38 @@ export const attendanceService = {
   async adminConfig(organizationId: string) {
     const org = await prisma.organization.findUnique({
       where: { id: organizationId },
-      select: { attendancePhotoRequired: true }
+      select: { attendancePhotoRequired: true, attendanceDesktopSkipLocation: true }
     });
     if (!org) throw new AppError(404, "ORG_NOT_FOUND", "Organization not found");
     const photoRequired = await attendancePhotoService.isRequiredForOrganization(organizationId);
     return {
       photoRequiredEnabled: org.attendancePhotoRequired,
       photoRequired,
-      photosAvailable: attendancePhotoService.isGloballyEnabled()
+      photosAvailable: attendancePhotoService.isGloballyEnabled(),
+      desktopSkipLocationEnabled: org.attendanceDesktopSkipLocation
     };
   },
 
-  async updateAdminConfig(organizationId: string, input: { photoRequiredEnabled: boolean }) {
+  async updateAdminConfig(organizationId: string, input: { photoRequiredEnabled?: boolean; desktopSkipLocationEnabled?: boolean }) {
     const org = await prisma.organization.update({
       where: { id: organizationId },
-      data: { attendancePhotoRequired: input.photoRequiredEnabled },
-      select: { attendancePhotoRequired: true }
+      data: {
+        ...(input.photoRequiredEnabled !== undefined ? { attendancePhotoRequired: input.photoRequiredEnabled } : {}),
+        ...(input.desktopSkipLocationEnabled !== undefined ? { attendanceDesktopSkipLocation: input.desktopSkipLocationEnabled } : {})
+      },
+      select: { attendancePhotoRequired: true, attendanceDesktopSkipLocation: true }
     });
     const photoRequired = await attendancePhotoService.isRequiredForOrganization(organizationId);
     emitToOrgRole(organizationId, ROLE.EMPLOYEE, "attendance.config_changed", {
       photoRequired,
-      photoRequiredEnabled: org.attendancePhotoRequired
+      photoRequiredEnabled: org.attendancePhotoRequired,
+      desktopSkipLocationEnabled: org.attendanceDesktopSkipLocation
     });
     return {
       photoRequiredEnabled: org.attendancePhotoRequired,
       photoRequired,
-      photosAvailable: attendancePhotoService.isGloballyEnabled()
+      photosAvailable: attendancePhotoService.isGloballyEnabled(),
+      desktopSkipLocationEnabled: org.attendanceDesktopSkipLocation
     };
   }
 };
