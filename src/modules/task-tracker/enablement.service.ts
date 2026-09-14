@@ -284,8 +284,7 @@ export const enablementService = {
 
     const orgAdmins = await prisma.user.findMany({
       where: {
-        memberships: { some: { organizationId } },
-        userRoles: { some: { role: { name: { in: [ROLE.ORG_ADMIN, "ADMIN"] } } } },
+        adminOrganizations: { some: { organizationId } },
         status: "ACTIVE"
       },
       select: { id: true, email: true, employee: true }

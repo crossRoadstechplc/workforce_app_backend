@@ -3,9 +3,10 @@ import { AppError } from "../../shared/errors/app-error.js";
 import { auditJson, type AuditContext } from "../../shared/audit.js";
 import { deliverNotification } from "../notifications/notification.service.js";
 import { emitToOfficeDisplay, emitToOrgAdmins, emitToUser } from "../../realtime/socket.server.js";
-import { ROLE, assertSameOrganization } from "../../shared/tenancy.js";
+import { assertSameOrganization } from "../../shared/tenancy.js";
 import { assertOfficeInScope, employeeOfficeFilter, type OfficeScope } from "../../shared/office-scope.js";
 import { leaveDaysBetween } from "../../shared/schedule-day-fraction.js";
+import { annualLeaveService } from "./annual-leave.service.js";
 
 async function employeeContext(userId: string) {
   const e = await prisma.employee.findUnique({
@@ -38,8 +39,7 @@ async function orgAdminUserIds(organizationId: string) {
   const users = await prisma.user.findMany({
     where: {
       status: "ACTIVE",
-      memberships: { some: { organizationId } },
-      userRoles: { some: { role: { name: ROLE.ORG_ADMIN } } }
+      adminOrganizations: { some: { organizationId } }
     },
     select: { id: true }
   });
@@ -72,6 +72,9 @@ export const leaveService = {
         data: { employeeId: e.id, leaveTypeId: input.leaveTypeId, startDate: s, endDate: ed, numberOfDays, reason: input.reason },
         include: { leaveType: true }
       });
+      if (type.tracksBalance) {
+        await annualLeaveService.reserve(tx, { employeeId: e.id, leaveRequestId: request.id, days: numberOfDays });
+      }
       const notifications = await Promise.all(
         admins.map((adminId) =>
           tx.notification.create({
@@ -153,13 +156,19 @@ export const leaveService = {
       }
       if (g.status === "CANCELLED") result.cancelledRequests = c;
     }
-    return result;
+    const annualLeave = await annualLeaveService.balanceForEmployee(e.id);
+    return { ...result, annualLeave };
   },
   async cancel(userId: string, id: string, reason?: string) {
     const current = await this.myGet(userId, id);
     if (current.status !== "PENDING") throw new AppError(409, "LEAVE_NOT_CANCELLABLE", "Only pending leave can be cancelled by the employee");
     const e = await employeeContext(userId);
-    const result = await prisma.leaveRequest.update({ where: { id }, data: { status: "CANCELLED" } });
+    const result = await prisma.$transaction(async (tx) => {
+      if (current.leaveType.tracksBalance) {
+        await annualLeaveService.release(tx, id, "pending");
+      }
+      return tx.leaveRequest.update({ where: { id }, data: { status: "CANCELLED" } });
+    });
     emitToOrgAdmins(e.organizationId, "leave.cancelled", { leaveRequestId: id, employeeId: current.employeeId });
     return result;
   },
@@ -218,7 +227,27 @@ export const leaveService = {
       if (g.status === "REJECTED") counts.rejected = n;
       if (g.status === "CANCELLED") counts.cancelled = n;
     }
-    return { items, meta: { page: input.page, pageSize: input.pageSize, total, totalPages: Math.ceil(total / input.pageSize) }, counts };
+    const balances = await annualLeaveService.balancesForEmployees(items.map((item) => item.employeeId));
+    return {
+      items: items.map((item) => {
+        const annualLeave = balances.get(item.employeeId);
+        return {
+          ...item,
+          annualLeave: annualLeave
+            ? {
+                available: annualLeave.available,
+                entitledTotal: annualLeave.entitledTotal,
+                used: annualLeave.used,
+                pending: annualLeave.pending,
+                carriedIn: annualLeave.carriedIn,
+                currentYearGrant: annualLeave.currentYearGrant
+              }
+            : null
+        };
+      }),
+      meta: { page: input.page, pageSize: input.pageSize, total, totalPages: Math.ceil(total / input.pageSize) },
+      counts
+    };
   },
   async adminGet(organizationId: string, id: string, scope: OfficeScope) {
     const item = await prisma.leaveRequest.findUnique({
@@ -226,13 +255,20 @@ export const leaveService = {
       include: {
         leaveType: true,
         employee: { include: { user: true, schedule: true, office: true } },
-        decisions: { include: { admin: { select: { id: true, email: true } } }, orderBy: { decidedAt: "desc" } }
+        decisions: { include: { admin: { select: { id: true, email: true } } }, orderBy: { decidedAt: "desc" } },
+        balanceAllocations: { include: { bucket: { select: { id: true, periodStart: true, periodEnd: true } } } }
       }
     });
     if (!item) throw new AppError(404, "LEAVE_NOT_FOUND", "Leave request not found");
     assertSameOrganization(item.employee.organizationId, organizationId, "LEAVE_NOT_FOUND", "Leave request not found");
     assertOfficeInScope(scope, item.employee.officeId, "You do not manage this office");
-    return item;
+    const { balanceAllocations, ...rest } = item;
+    const annualLeave = await annualLeaveService.balanceForEmployee(item.employeeId);
+    return {
+      ...rest,
+      annualLeave,
+      allocations: annualLeaveService.allocationsForRequest(balanceAllocations)
+    };
   },
   async decide(organizationId: string, id: string, decision: "APPROVED" | "REJECTED", reason: string | undefined, audit: AuditContext, scope: OfficeScope) {
     const current = await this.adminGet(organizationId, id, scope);
@@ -242,6 +278,10 @@ export const leaveService = {
       await assertNoAttendanceInRange(current.employeeId, current.startDate, current.endDate);
     }
     const result = await prisma.$transaction(async (tx) => {
+      if (current.leaveType.tracksBalance) {
+        if (decision === "APPROVED") await annualLeaveService.consumeReserved(tx, id);
+        else await annualLeaveService.release(tx, id, "pending");
+      }
       const updated = await tx.leaveRequest.update({ where: { id }, data: { status: decision } });
       await tx.leaveDecision.create({
         data: { leaveRequestId: id, adminUserId: audit.actorUserId, decision, decisionReason: reason }
@@ -283,5 +323,23 @@ export const leaveService = {
     emitToOrgAdmins(organizationId, "leave.decision_updated", { leaveRequestId: id, status: decision });
     emitToOfficeDisplay(organizationId, current.employee.officeId, "display.people_changed", { employeeId: current.employeeId });
     return result.updated;
+  },
+
+  async myBalance(userId: string) {
+    const e = await employeeContext(userId);
+    return annualLeaveService.balanceForEmployee(e.id);
+  },
+
+  async adminEmployeeBalance(organizationId: string, employeeId: string, scope: OfficeScope) {
+    const employee = await prisma.employee.findUnique({ where: { id: employeeId }, select: { id: true, organizationId: true, officeId: true } });
+    if (!employee) throw new AppError(404, "EMPLOYEE_NOT_FOUND", "Employee not found");
+    assertSameOrganization(employee.organizationId, organizationId, "EMPLOYEE_NOT_FOUND", "Employee not found");
+    assertOfficeInScope(scope, employee.officeId, "You do not manage this employee's office");
+    return annualLeaveService.balanceForEmployee(employeeId);
+  },
+
+  async adminAdjustBalance(organizationId: string, employeeId: string, days: number, note: string, scope: OfficeScope) {
+    await this.adminEmployeeBalance(organizationId, employeeId, scope);
+    return annualLeaveService.adjust(employeeId, days, note);
   }
 };

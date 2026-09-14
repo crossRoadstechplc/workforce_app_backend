@@ -16,3 +16,13 @@ export const adminLeaveListSchema = z.object({
 export const approveLeaveSchema = z.object({ params: z.object({ id: z.string().uuid() }), body: z.object({ reason: z.string().trim().max(1000).optional() }) });
 export const rejectLeaveSchema = z.object({ params: z.object({ id: z.string().uuid() }), body: z.object({ reason: z.string().trim().min(5).max(1000) }) });
 export const cancelLeaveSchema = z.object({ params: z.object({ id: z.string().uuid() }), body: z.object({ reason: z.string().trim().min(3).max(1000).optional() }).default({}) });
+export const adjustLeaveBalanceSchema = z.object({
+  params: z.object({ employeeId: z.string().uuid() }),
+  body: z.object({
+    days: z.coerce.number().refine((n) => Number.isFinite(n) && n !== 0 && Math.abs(n) <= 366, {
+      message: "Adjustment must be a non-zero number of days"
+    }),
+    note: z.string().trim().min(3).max(1000)
+  })
+});
+export const employeeLeaveBalanceSchema = z.object({ params: z.object({ employeeId: z.string().uuid() }) });

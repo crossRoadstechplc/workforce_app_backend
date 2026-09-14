@@ -56,6 +56,7 @@ async function main() {
       "user_devices",
       "refresh_tokens",
       "admin_offices",
+      "admin_organizations",
       "organization_memberships",
       "evaluation_scores",
       "evaluation_goals",

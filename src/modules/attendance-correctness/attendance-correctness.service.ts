@@ -69,8 +69,10 @@ async function orgAdminUserIds(organizationId: string) {
   const users = await prisma.user.findMany({
     where: {
       status: "ACTIVE",
-      memberships: { some: { organizationId } },
-      userRoles: { some: { role: { name: { in: [ROLE.ORG_ADMIN, ROLE.OFFICE_ADMIN, "ADMIN"] } } } }
+      OR: [
+        { adminOrganizations: { some: { organizationId } } },
+        { adminOffices: { some: { office: { organizationId } } } }
+      ]
     },
     select: { id: true }
   });

@@ -10,6 +10,7 @@ type UserWithRoles = {
   mustChangePassword: boolean;
   userRoles: Array<{ role: { name: string } }>;
   memberships: Array<{ organizationId: string }>;
+  adminOrganizations?: Array<{ organizationId: string }>;
 };
 
 export function normalizeEmail(email: string) {
@@ -22,6 +23,7 @@ export async function findUserByEmail(email: string, tx: Tx | typeof prisma = pr
     include: {
       userRoles: { include: { role: true } },
       memberships: true,
+      adminOrganizations: true,
       employee: true
     }
   });
@@ -31,8 +33,8 @@ function hasRole(user: UserWithRoles, roleName: string) {
   return user.userRoles.some((entry) => entry.role.name === roleName);
 }
 
-function hasOrgMembership(user: UserWithRoles, organizationId: string) {
-  return user.memberships.some((entry) => entry.organizationId === organizationId);
+function hasOrgAdminAssignment(user: UserWithRoles, organizationId: string) {
+  return (user.adminOrganizations ?? []).some((entry) => entry.organizationId === organizationId);
 }
 
 export function assertNotPlatformAdmin(user: UserWithRoles) {
@@ -69,6 +71,46 @@ export async function ensureAdminOffices(userId: string, officeIds: string[], tx
   }
 }
 
+export async function ensureAdminOrganization(userId: string, organizationId: string, tx: Tx) {
+  await tx.adminOrganization.upsert({
+    where: { userId_organizationId: { userId, organizationId } },
+    update: {},
+    create: { userId, organizationId }
+  });
+}
+
+export async function dropRoleIfUnused(userId: string, roleName: string, tx: Tx) {
+  const role = await tx.role.findUnique({ where: { name: roleName } });
+  if (!role) return;
+  await tx.userRole.deleteMany({ where: { userId, roleId: role.id } });
+}
+
+export async function syncOfficeAdminTenantState(userId: string, organizationId: string, tx: Tx) {
+  const [officesInOrg, officesAnywhere, orgAdminHere, employeeHere] = await Promise.all([
+    tx.adminOffice.count({ where: { userId, office: { organizationId } } }),
+    tx.adminOffice.count({ where: { userId } }),
+    tx.adminOrganization.count({ where: { userId, organizationId } }),
+    tx.employee.count({ where: { userId, organizationId } })
+  ]);
+  if (officesAnywhere === 0) await dropRoleIfUnused(userId, ROLE.OFFICE_ADMIN, tx);
+  if (officesInOrg === 0 && orgAdminHere === 0 && employeeHere === 0) {
+    await tx.organizationMembership.deleteMany({ where: { userId, organizationId } });
+  }
+}
+
+export async function syncOrgAdminTenantState(userId: string, organizationId: string, tx: Tx) {
+  const [orgAdminAnywhere, orgAdminHere, officesInOrg, employeeHere] = await Promise.all([
+    tx.adminOrganization.count({ where: { userId } }),
+    tx.adminOrganization.count({ where: { userId, organizationId } }),
+    tx.adminOffice.count({ where: { userId, office: { organizationId } } }),
+    tx.employee.count({ where: { userId, organizationId } })
+  ]);
+  if (orgAdminAnywhere === 0) await dropRoleIfUnused(userId, ROLE.ORG_ADMIN, tx);
+  if (orgAdminHere === 0 && officesInOrg === 0 && employeeHere === 0) {
+    await tx.organizationMembership.deleteMany({ where: { userId, organizationId } });
+  }
+}
+
 export async function assertCanBecomeEmployee(userId: string, organizationId: string, tx: Tx) {
   const existing = await tx.employee.findUnique({ where: { userId } });
   if (!existing) return;
@@ -80,7 +122,7 @@ export async function assertCanBecomeEmployee(userId: string, organizationId: st
 
 export async function assertCanAssignOrgAdmin(user: UserWithRoles, organizationId: string) {
   assertNotPlatformAdmin(user);
-  if (hasRole(user, ROLE.ORG_ADMIN) && hasOrgMembership(user, organizationId)) {
+  if (hasOrgAdminAssignment(user, organizationId)) {
     throw new AppError(409, "ROLE_ALREADY_ASSIGNED", "This user is already a company administrator for this organization");
   }
 }
@@ -116,12 +158,14 @@ export async function resolveUserForOrgAdmin(
     });
     await ensureRole(user.id, ROLE.ORG_ADMIN, tx);
     await ensureOrgMembership(user.id, input.organizationId, tx);
+    await ensureAdminOrganization(user.id, input.organizationId, tx);
     return { userId: user.id, created: true as const };
   }
 
   assertCanAssignOrgAdmin(existing, input.organizationId);
   await ensureRole(existing.id, ROLE.ORG_ADMIN, tx);
   await ensureOrgMembership(existing.id, input.organizationId, tx);
+  await ensureAdminOrganization(existing.id, input.organizationId, tx);
   return { userId: existing.id, created: false as const };
 }
 

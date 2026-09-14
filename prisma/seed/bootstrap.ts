@@ -141,6 +141,7 @@ export async function bootstrap(): Promise<BootstrapResult> {
     });
     await prisma.userRole.deleteMany({ where: { userId: user.id, roleId: orgAdmin.id } });
     await prisma.organizationMembership.deleteMany({ where: { userId: user.id } });
+    await prisma.adminOrganization.deleteMany({ where: { userId: user.id } });
     await prisma.userRole.upsert({
       where: { userId_roleId: { userId: user.id, roleId: superAdmin.id } },
       update: {},

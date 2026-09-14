@@ -19,6 +19,7 @@ async function loadUser(userId: string) {
         include: { role: { include: { permissions: { include: { permission: true } } } } }
       },
       memberships: { include: { organization: true }, orderBy: { createdAt: "asc" } },
+      adminOrganizations: { include: { organization: true }, orderBy: { createdAt: "asc" } },
       adminOffices: {
         include: { office: { select: { id: true, name: true, isActive: true, organizationId: true } } }
       },
@@ -76,15 +77,18 @@ export function buildContextsForUser(user: UserWithRelations): LoginContext[] {
   for (const membership of user.memberships) {
     orgMap.set(membership.organizationId, organizationSummary(membership.organization));
   }
+  for (const assignment of user.adminOrganizations) {
+    orgMap.set(assignment.organizationId, organizationSummary(assignment.organization));
+  }
   if (user.employee?.organization) {
     orgMap.set(user.employee.organizationId, organizationSummary(user.employee.organization));
   }
 
   for (const [organizationId, org] of orgMap) {
     if (!org.isActive) continue;
-    const hasMembership = user.memberships.some((entry) => entry.organizationId === organizationId);
+    const isCompanyAdmin = user.adminOrganizations.some((entry) => entry.organizationId === organizationId);
 
-    if (roles.includes(ROLE.ORG_ADMIN) && hasMembership) {
+    if (isCompanyAdmin) {
       contexts.push({
         key: buildContextKey("org_admin", organizationId),
         type: "org_admin",
@@ -174,7 +178,8 @@ export async function resolveScopedIdentity(userId: string, contextKey: string):
   let permissions: string[] = [];
   const resolvedOrganizationId: string | null = organizationId;
   let organization = context.organizationId
-    ? user.memberships.find((entry) => entry.organizationId === context.organizationId)?.organization ??
+    ? user.adminOrganizations.find((entry) => entry.organizationId === context.organizationId)?.organization ??
+      user.memberships.find((entry) => entry.organizationId === context.organizationId)?.organization ??
       (user.employee?.organizationId === context.organizationId ? user.employee.organization : null) ??
       null
     : null;

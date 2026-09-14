@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { authenticate, requireNormalSession, requireOrgContext, requirePermission } from "../../middleware/authenticate.js";
 import { validate } from "../../shared/validate.js";
-import { adminLeave, adminLeaves, approveLeave, cancelLeave, createLeave, leaveTypes, myLeave, myLeaves, myLeaveSummary, rejectLeave } from "./leave.controller.js";
+import { adminLeave, adminLeaves, approveLeave, cancelLeave, createLeave, leaveTypes, myBalance, myLeave, myLeaves, myLeaveSummary, rejectLeave } from "./leave.controller.js";
 import { adminLeaveListSchema, approveLeaveSchema, cancelLeaveSchema, createLeaveSchema, leaveIdSchema, listMyLeaveSchema, rejectLeaveSchema } from "./leave.schemas.js";
 
 export const leaveRouter = Router();
@@ -10,6 +10,7 @@ leaveRouter.get("/types", requirePermission("leave.view_own"), leaveTypes);
 leaveRouter.post("/", requirePermission("leave.request"), validate(createLeaveSchema), createLeave);
 leaveRouter.get("/", requirePermission("leave.view_own"), validate(listMyLeaveSchema), myLeaves);
 leaveRouter.get("/summary", requirePermission("leave.view_own"), myLeaveSummary);
+leaveRouter.get("/balance", requirePermission("leave.view_own"), myBalance);
 leaveRouter.get("/:id", requirePermission("leave.view_own"), validate(leaveIdSchema), myLeave);
 leaveRouter.post("/:id/cancel", requirePermission("leave.request"), validate(cancelLeaveSchema), cancelLeave);
 

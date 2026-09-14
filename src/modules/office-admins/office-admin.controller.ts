@@ -6,6 +6,7 @@ import {
   officeAdminListSchema,
   officeAdminParamsSchema,
   officeAdminStatusSchema,
+  officeAdminUnassignParamsSchema,
   resetOfficeAdminPasswordSchema,
   updateOfficeAdminOfficesSchema
 } from "./office-admin.schemas.js";
@@ -42,4 +43,9 @@ export const resetOfficeAdminPassword: RequestHandler = async (req, res) => {
   const { userId } = officeAdminParamsSchema.parse(req.params);
   const body = resetOfficeAdminPasswordSchema.parse(req.body);
   res.json(await officeAdminService.resetPassword(requireOrganizationId(req.auth), userId, body, auditContextFromRequest(req)));
+};
+
+export const unassignOfficeAdmin: RequestHandler = async (req, res) => {
+  const { officeId, userId } = officeAdminUnassignParamsSchema.parse(req.params);
+  res.json(await officeAdminService.unassignFromOffice(requireOrganizationId(req.auth), officeId, userId, auditContextFromRequest(req)));
 };

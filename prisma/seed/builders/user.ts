@@ -35,10 +35,19 @@ export async function upsertUserWithRole(
   if (input.role === "SUPER_ADMIN") {
     await prisma.userRole.deleteMany({ where: { userId: user.id, roleId: { in: [roleIds.orgAdmin, roleIds.employee] } } });
     await prisma.organizationMembership.deleteMany({ where: { userId: user.id } });
+    await prisma.adminOrganization.deleteMany({ where: { userId: user.id } });
   }
 
   if (input.organizationId && input.role !== "SUPER_ADMIN") {
     await prisma.organizationMembership.upsert({
+      where: { userId_organizationId: { userId: user.id, organizationId: input.organizationId } },
+      update: {},
+      create: { userId: user.id, organizationId: input.organizationId }
+    });
+  }
+
+  if (input.organizationId && input.role === "ORG_ADMIN") {
+    await prisma.adminOrganization.upsert({
       where: { userId_organizationId: { userId: user.id, organizationId: input.organizationId } },
       update: {},
       create: { userId: user.id, organizationId: input.organizationId }

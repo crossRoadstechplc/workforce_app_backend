@@ -7,6 +7,7 @@ import {
   orgAdminParamsSchema,
   orgAdminResetPasswordSchema,
   orgAdminStatusSchema,
+  orgAdminUnassignParamsSchema,
   organizationCreateSchema,
   organizationListSchema,
   organizationParamsSchema,
@@ -47,4 +48,9 @@ export const changeOrgAdminStatus: RequestHandler = async (req, res) => {
 export const resetOrgAdminPassword: RequestHandler = async (req, res) => {
   const { userId } = orgAdminParamsSchema.parse(req.params);
   res.json(await platformService.resetOrgAdminPassword(userId, orgAdminResetPasswordSchema.parse(req.body), auditContextFromRequest(req)));
+};
+
+export const unassignOrgAdmin: RequestHandler = async (req, res) => {
+  const { organizationId, userId } = orgAdminUnassignParamsSchema.parse(req.params);
+  res.json(await platformService.unassignOrgAdmin(organizationId, userId, auditContextFromRequest(req)));
 };

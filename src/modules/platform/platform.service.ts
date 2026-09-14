@@ -6,16 +6,22 @@ import { generateTemporaryPassword } from "../../shared/password.js";
 import { pageMeta, pagination } from "../../shared/pagination.js";
 import { ROLE } from "../../shared/tenancy.js";
 import { createInviteInTx, deliverInvite } from "../invites/invite.service.js";
-import { resolveUserForOrgAdmin } from "../users/user-provision.service.js";
+import { resolveUserForOrgAdmin, syncOrgAdminTenantState } from "../users/user-provision.service.js";
 
-const DEFAULT_LEAVE_TYPES = ["Annual Leave", "Sick Leave", "Emergency Leave", "Unpaid Leave", "Other Leave"];
+const DEFAULT_LEAVE_TYPES: Array<{ name: string; code: "ANNUAL" | "SICK" | "EMERGENCY" | "UNPAID" | "OTHER"; tracksBalance: boolean }> = [
+  { name: "Annual Leave", code: "ANNUAL", tracksBalance: true },
+  { name: "Sick Leave", code: "SICK", tracksBalance: false },
+  { name: "Emergency Leave", code: "EMERGENCY", tracksBalance: false },
+  { name: "Unpaid Leave", code: "UNPAID", tracksBalance: false },
+  { name: "Other Leave", code: "OTHER", tracksBalance: false }
+];
 
 export const platformService = {
   async dashboard() {
     const [organizations, activeOrganizations, orgAdmins, employees, offices] = await prisma.$transaction([
       prisma.organization.count(),
       prisma.organization.count({ where: { isActive: true } }),
-      prisma.userRole.count({ where: { role: { name: ROLE.ORG_ADMIN } } }),
+      prisma.adminOrganization.count(),
       prisma.employee.count(),
       prisma.office.count()
     ]);
@@ -33,8 +39,10 @@ export const platformService = {
       const created = await tx.organization.create({
         data: { name: input.name, slug, isActive: input.isActive ?? true }
       });
-      for (const name of DEFAULT_LEAVE_TYPES) {
-        await tx.leaveType.create({ data: { organizationId: created.id, name, isActive: true } });
+      for (const type of DEFAULT_LEAVE_TYPES) {
+        await tx.leaveType.create({
+          data: { organizationId: created.id, name: type.name, code: type.code, tracksBalance: type.tracksBalance, isActive: true }
+        });
       }
       await tx.auditLog.create({
         data: {
@@ -170,7 +178,11 @@ export const platformService = {
 
       const user = await tx.user.findUniqueOrThrow({
         where: { id: userId },
-        include: { memberships: { include: { organization: true } }, userRoles: { include: { role: true } } }
+        include: {
+          memberships: { include: { organization: true } },
+          adminOrganizations: { include: { organization: { select: { id: true, name: true, slug: true, isActive: true } } } },
+          userRoles: { include: { role: true } }
+        }
       });
 
       await tx.auditLog.create({
@@ -216,9 +228,8 @@ export const platformService = {
 
   async listOrgAdmins(input: { page: number; pageSize: number; organizationId?: string; search?: string; status?: "ACTIVE" | "INACTIVE" | "LOCKED" }) {
     const where = {
-      userRoles: { some: { role: { name: ROLE.ORG_ADMIN } } },
+      adminOrganizations: { some: input.organizationId ? { organizationId: input.organizationId } : {} },
       ...(input.status ? { status: input.status } : {}),
-      ...(input.organizationId ? { memberships: { some: { organizationId: input.organizationId } } } : {}),
       ...(input.search ? { email: { contains: input.search, mode: "insensitive" as const } } : {})
     };
     const [items, total] = await prisma.$transaction([
@@ -228,6 +239,7 @@ export const platformService = {
         ...pagination(input),
         include: {
           memberships: { include: { organization: { select: { id: true, name: true, slug: true, isActive: true } } } },
+          adminOrganizations: { include: { organization: { select: { id: true, name: true, slug: true, isActive: true } } } },
           userRoles: { include: { role: { select: { name: true } } } }
         }
       }),
@@ -238,9 +250,10 @@ export const platformService = {
 
   async getOrgAdmin(userId: string) {
     const user = await prisma.user.findFirst({
-      where: { id: userId, userRoles: { some: { role: { name: ROLE.ORG_ADMIN } } } },
+      where: { id: userId, adminOrganizations: { some: {} } },
       include: {
         memberships: { include: { organization: true } },
+        adminOrganizations: { include: { organization: true } },
         userRoles: { include: { role: true } }
       }
     });
@@ -294,5 +307,36 @@ export const platformService = {
       });
     });
     return { userId, temporaryPassword, mustChangePassword: true };
+  },
+
+  async unassignOrgAdmin(organizationId: string, userId: string, audit: AuditContext) {
+    await this.getOrganization(organizationId);
+    const assignment = await prisma.adminOrganization.findUnique({
+      where: { userId_organizationId: { userId, organizationId } }
+    });
+    if (!assignment) throw new AppError(404, "ORG_ADMIN_NOT_FOUND", "This user is not a company administrator for this organization");
+
+    await prisma.$transaction(async (tx) => {
+      const remaining = await tx.adminOrganization.count({ where: { organizationId } });
+      if (remaining <= 1) {
+        throw new AppError(409, "LAST_ORG_ADMIN", "Cannot remove the last company administrator for this organization");
+      }
+      await tx.adminOrganization.delete({ where: { userId_organizationId: { userId, organizationId } } });
+      await syncOrgAdminTenantState(userId, organizationId, tx);
+      await tx.auditLog.create({
+        data: {
+          actorUserId: audit.actorUserId,
+          action: "ORG_ADMIN_UNASSIGNED",
+          entityType: "User",
+          entityId: userId,
+          oldValues: { organizationId },
+          newValues: { organizationId: null },
+          ipAddress: audit.ipAddress,
+          userAgent: audit.userAgent
+        }
+      });
+      await tx.refreshToken.updateMany({ where: { userId, revokedAt: null }, data: { revokedAt: new Date() } });
+    });
+    return { userId, organizationId };
   }
 };

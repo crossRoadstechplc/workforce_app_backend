@@ -9,10 +9,18 @@ export async function seedOrganization(prisma: PrismaClient, fixture: Organizati
   });
 
   for (const name of fixture.leaveTypes) {
+    const key = name.trim().toLowerCase();
+    const code =
+      key === "annual leave" ? "ANNUAL" :
+      key === "sick leave" ? "SICK" :
+      key === "emergency leave" ? "EMERGENCY" :
+      key === "unpaid leave" ? "UNPAID" :
+      "OTHER";
+    const tracksBalance = code === "ANNUAL";
     await prisma.leaveType.upsert({
       where: { organizationId_name: { organizationId: organization.id, name } },
-      update: { isActive: true },
-      create: { organizationId: organization.id, name, isActive: true }
+      update: { isActive: true, code, tracksBalance },
+      create: { organizationId: organization.id, name, code, tracksBalance, isActive: true }
     });
   }
 

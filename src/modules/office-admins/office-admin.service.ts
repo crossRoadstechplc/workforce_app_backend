@@ -6,11 +6,20 @@ import { generateTemporaryPassword } from "../../shared/password.js";
 import { pageMeta, pagination } from "../../shared/pagination.js";
 import { ROLE } from "../../shared/tenancy.js";
 import { createInviteInTx, deliverInvite } from "../invites/invite.service.js";
-import { resolveUserForOfficeAdmin } from "../users/user-provision.service.js";
+import { resolveUserForOfficeAdmin, syncOfficeAdminTenantState } from "../users/user-provision.service.js";
 
 async function assertOfficesInOrg(organizationId: string, officeIds: string[]) {
-  const offices = await prisma.office.findMany({ where: { id: { in: officeIds }, organizationId, isActive: true } });
-  if (offices.length !== officeIds.length) throw new AppError(400, "INVALID_OFFICE", "One or more offices are invalid for this organization");
+  if (officeIds.length === 0) return;
+  const uniqueIds = [...new Set(officeIds)];
+  const offices = await prisma.office.findMany({ where: { id: { in: uniqueIds }, organizationId, isActive: true } });
+  if (offices.length !== uniqueIds.length) throw new AppError(400, "INVALID_OFFICE", "One or more offices are invalid for this organization");
+}
+
+function officeAdminOfficeFilter(organizationId: string) {
+  return {
+    where: { office: { organizationId } },
+    include: { office: { select: { id: true, name: true, isActive: true, organizationId: true } } }
+  } as const;
 }
 
 export const officeAdminService = {
@@ -37,7 +46,7 @@ export const officeAdminService = {
       const createdUser = await tx.user.findUniqueOrThrow({
         where: { id: userId },
         include: {
-          adminOffices: { include: { office: { select: { id: true, name: true } } } },
+          adminOffices: officeAdminOfficeFilter(organizationId),
           userRoles: { include: { role: true } }
         }
       });
@@ -95,10 +104,9 @@ export const officeAdminService = {
   async list(organizationId: string, input: { page: number; pageSize: number; search?: string; status?: "ACTIVE" | "INACTIVE" | "LOCKED"; officeId?: string }) {
     const where = {
       userRoles: { some: { role: { name: ROLE.OFFICE_ADMIN } } },
-      memberships: { some: { organizationId } },
+      adminOffices: { some: { office: { organizationId }, ...(input.officeId ? { officeId: input.officeId } : {}) } },
       ...(input.status ? { status: input.status } : {}),
-      ...(input.search ? { email: { contains: input.search, mode: "insensitive" as const } } : {}),
-      ...(input.officeId ? { adminOffices: { some: { officeId: input.officeId } } } : {})
+      ...(input.search ? { email: { contains: input.search, mode: "insensitive" as const } } : {})
     };
     const [items, total] = await prisma.$transaction([
       prisma.user.findMany({
@@ -106,7 +114,7 @@ export const officeAdminService = {
         orderBy: { createdAt: "desc" },
         ...pagination(input),
         include: {
-          adminOffices: { include: { office: { select: { id: true, name: true, isActive: true } } } },
+          adminOffices: officeAdminOfficeFilter(organizationId),
           userRoles: { include: { role: { select: { name: true } } } }
         }
       }),
@@ -120,10 +128,10 @@ export const officeAdminService = {
       where: {
         id: userId,
         userRoles: { some: { role: { name: ROLE.OFFICE_ADMIN } } },
-        memberships: { some: { organizationId } }
+        adminOffices: { some: { office: { organizationId } } }
       },
       include: {
-        adminOffices: { include: { office: { select: { id: true, name: true, isActive: true, organizationId: true } } } },
+        adminOffices: officeAdminOfficeFilter(organizationId),
         userRoles: { include: { role: true } }
       }
     });
@@ -133,13 +141,17 @@ export const officeAdminService = {
 
   async updateOffices(organizationId: string, userId: string, officeIds: string[], audit: AuditContext) {
     const current = await this.get(organizationId, userId);
-    await assertOfficesInOrg(organizationId, officeIds);
+    const uniqueOfficeIds = [...new Set(officeIds)];
+    await assertOfficesInOrg(organizationId, uniqueOfficeIds);
     return prisma.$transaction(async (tx) => {
-      await tx.adminOffice.deleteMany({ where: { userId } });
-      await tx.adminOffice.createMany({ data: officeIds.map((officeId) => ({ userId, officeId })) });
+      await tx.adminOffice.deleteMany({ where: { userId, office: { organizationId } } });
+      if (uniqueOfficeIds.length) {
+        await tx.adminOffice.createMany({ data: uniqueOfficeIds.map((officeId) => ({ userId, officeId })) });
+      }
+      await syncOfficeAdminTenantState(userId, organizationId, tx);
       const updated = await tx.user.findUnique({
         where: { id: userId },
-        include: { adminOffices: { include: { office: { select: { id: true, name: true } } } } }
+        include: { adminOffices: officeAdminOfficeFilter(organizationId) }
       });
       await tx.auditLog.create({
         data: {
@@ -155,6 +167,32 @@ export const officeAdminService = {
       });
       await tx.refreshToken.updateMany({ where: { userId, revokedAt: null }, data: { revokedAt: new Date() } });
       return updated!;
+    });
+  },
+
+  async unassignFromOffice(organizationId: string, officeId: string, userId: string, audit: AuditContext) {
+    const office = await prisma.office.findFirst({ where: { id: officeId, organizationId } });
+    if (!office) throw new AppError(404, "OFFICE_NOT_FOUND", "Office not found");
+    const assignment = await prisma.adminOffice.findUnique({ where: { userId_officeId: { userId, officeId } } });
+    if (!assignment) throw new AppError(404, "OFFICE_ADMIN_NOT_FOUND", "Office administrator is not assigned to this office");
+
+    return prisma.$transaction(async (tx) => {
+      await tx.adminOffice.delete({ where: { userId_officeId: { userId, officeId } } });
+      await syncOfficeAdminTenantState(userId, organizationId, tx);
+      await tx.auditLog.create({
+        data: {
+          actorUserId: audit.actorUserId,
+          action: "OFFICE_ADMIN_UNASSIGNED",
+          entityType: "User",
+          entityId: userId,
+          oldValues: { officeId, organizationId },
+          newValues: { officeId: null },
+          ipAddress: audit.ipAddress,
+          userAgent: audit.userAgent
+        }
+      });
+      await tx.refreshToken.updateMany({ where: { userId, revokedAt: null }, data: { revokedAt: new Date() } });
+      return { userId, officeId };
     });
   },
 

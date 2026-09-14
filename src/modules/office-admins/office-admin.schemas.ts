@@ -8,7 +8,12 @@ export const createOfficeAdminSchema = z.object({
 });
 
 export const updateOfficeAdminOfficesSchema = z.object({
-  officeIds: z.array(z.string().uuid()).min(1)
+  officeIds: z.array(z.string().uuid())
+});
+
+export const officeAdminUnassignParamsSchema = z.object({
+  officeId: z.string().uuid(),
+  userId: z.string().uuid()
 });
 
 export const officeAdminListSchema = z.object({

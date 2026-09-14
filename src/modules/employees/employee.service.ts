@@ -8,6 +8,8 @@ import { pageMeta, pagination } from "../../shared/pagination.js";
 import { assertSameOrganization } from "../../shared/tenancy.js";
 import { assertOfficeInScope, employeeOfficeFilter, type OfficeScope } from "../../shared/office-scope.js";
 import { supervisorPortalAccess, validateSupervisor } from "../performance/performance.service.js";
+import { annualLeaveService } from "../leave/annual-leave.service.js";
+import { ymd } from "../leave/annual-leave.policy.js";
 import {
   assertCanBecomeEmployee,
   assertNotPlatformAdmin,
@@ -331,6 +333,9 @@ export const employeeService = {
       }
       const { email: _email, ...employeeData } = input;
       const updated = await tx.employee.update({ where: { id: employeeId }, data: employeeData, include: employeeInclude });
+      if (input.employmentStartDate && ymd(input.employmentStartDate) !== ymd(current.employmentStartDate)) {
+        await annualLeaveService.rebuild(tx, employeeId);
+      }
       await tx.auditLog.create({
         data: {
           actorUserId: audit.actorUserId,

@@ -52,6 +52,11 @@ export const orgAdminParamsSchema = z.object({
   userId: z.string().uuid()
 });
 
+export const orgAdminUnassignParamsSchema = z.object({
+  organizationId: z.string().uuid(),
+  userId: z.string().uuid()
+});
+
 export const orgAdminStatusSchema = z.object({
   status: z.enum(["ACTIVE", "INACTIVE"]),
   reason: z.string().trim().min(3).max(500)

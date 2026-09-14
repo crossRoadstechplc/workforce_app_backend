@@ -11,6 +11,7 @@ import {
   listOrganizations,
   platformDashboard,
   resetOrgAdminPassword,
+  unassignOrgAdmin,
   updateOrganization
 } from "./platform.controller.js";
 
@@ -30,3 +31,4 @@ platformRouter.get("/org-admins", requirePermission("org_admin.manage"), listOrg
 platformRouter.get("/org-admins/:userId", requirePermission("org_admin.manage"), getOrgAdmin);
 platformRouter.patch("/org-admins/:userId/status", requirePermission("org_admin.manage"), changeOrgAdminStatus);
 platformRouter.post("/org-admins/:userId/reset-password", requirePermission("org_admin.manage"), resetOrgAdminPassword);
+platformRouter.delete("/organizations/:organizationId/admins/:userId", requirePermission("org_admin.manage"), unassignOrgAdmin);

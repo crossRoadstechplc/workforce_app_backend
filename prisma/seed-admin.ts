@@ -88,6 +88,7 @@ async function main() {
   // A platform admin owns no tenant scope.
   await prisma.userRole.deleteMany({ where: { userId: user.id, roleId: { not: superAdminRoleId } } });
   await prisma.organizationMembership.deleteMany({ where: { userId: user.id } });
+  await prisma.adminOrganization.deleteMany({ where: { userId: user.id } });
 
   const otherAdmins = await prisma.user.count({
     where: { id: { not: user.id }, userRoles: { some: { role: { name: "SUPER_ADMIN" } } } }

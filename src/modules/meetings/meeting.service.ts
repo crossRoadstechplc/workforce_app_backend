@@ -3,7 +3,7 @@ import { prisma } from "../../database/prisma.js";
 import { AppError } from "../../shared/errors/app-error.js";
 import { auditJson, type AuditContext } from "../../shared/audit.js";
 import { pageMeta, pagination } from "../../shared/pagination.js";
-import { isOfficeAdmin, isOrgAdmin, ROLE, type AuthContext } from "../../shared/tenancy.js";
+import { isOfficeAdmin, isOrgAdmin, type AuthContext } from "../../shared/tenancy.js";
 import { deliverNotification } from "../notifications/notification.service.js";
 import { emitToOfficeDisplay, emitToOfficeStaff, emitToOrgAdmins, emitToUser } from "../../realtime/socket.server.js";
 import type { MeetingBookingStatus, Prisma } from "../../generated/prisma/client.js";
@@ -52,8 +52,7 @@ async function orgAdminUserIds(organizationId: string) {
   const users = await prisma.user.findMany({
     where: {
       status: "ACTIVE",
-      memberships: { some: { organizationId } },
-      userRoles: { some: { role: { name: { in: [ROLE.ORG_ADMIN, "ADMIN"] } } } }
+      adminOrganizations: { some: { organizationId } }
     },
     select: { id: true }
   });

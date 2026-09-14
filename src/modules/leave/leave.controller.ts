@@ -40,6 +40,14 @@ export const myLeaveSummary: RequestHandler = async (req, res, next) => {
   }
 };
 
+export const myBalance: RequestHandler = async (req, res, next) => {
+  try {
+    res.json({ data: await leaveService.myBalance(req.auth!.userId) });
+  } catch (e) {
+    next(e);
+  }
+};
+
 export const myLeave: RequestHandler = async (req, res, next) => {
   try {
     res.json({ data: await leaveService.myGet(req.auth!.userId, paramId(req.params.id!)) });
@@ -90,6 +98,34 @@ export const rejectLeave: RequestHandler = async (req, res, next) => {
     const scope = getOfficeScope(req.auth);
     res.json({
       data: await leaveService.decide(requireOrganizationId(req.auth), paramId(req.params.id!), "REJECTED", req.body.reason, auditContextFromRequest(req), scope)
+    });
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const employeeLeaveBalance: RequestHandler = async (req, res, next) => {
+  try {
+    const scope = getOfficeScope(req.auth);
+    res.json({
+      data: await leaveService.adminEmployeeBalance(requireOrganizationId(req.auth), paramId(req.params.employeeId!), scope)
+    });
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const adjustEmployeeLeaveBalance: RequestHandler = async (req, res, next) => {
+  try {
+    const scope = getOfficeScope(req.auth);
+    res.json({
+      data: await leaveService.adminAdjustBalance(
+        requireOrganizationId(req.auth),
+        paramId(req.params.employeeId!),
+        req.body.days,
+        req.body.note,
+        scope
+      )
     });
   } catch (e) {
     next(e);
