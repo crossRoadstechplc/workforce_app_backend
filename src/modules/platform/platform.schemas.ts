@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { easyPasswordSchema } from "../../shared/password.js";
 
 export const organizationCreateSchema = z.object({
   name: z.string().trim().min(2).max(120),
@@ -36,7 +37,7 @@ export const organizationParamsSchema = z.object({
 export const orgAdminCreateSchema = z.object({
   organizationId: z.string().uuid(),
   email: z.string().email().transform((v) => v.toLowerCase()),
-  temporaryPassword: z.string().min(10).optional(),
+  temporaryPassword: easyPasswordSchema.optional(),
   deliveryMethod: z.enum(["SHOW_PASSWORD", "SEND_EMAIL"]).default("SHOW_PASSWORD")
 });
 
@@ -63,6 +64,6 @@ export const orgAdminStatusSchema = z.object({
 });
 
 export const orgAdminResetPasswordSchema = z.object({
-  temporaryPassword: z.string().min(10).optional(),
+  temporaryPassword: easyPasswordSchema.optional(),
   reason: z.string().trim().min(3).max(500)
 });

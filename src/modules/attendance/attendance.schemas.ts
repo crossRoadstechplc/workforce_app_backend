@@ -1,6 +1,23 @@
 import { z } from "zod";
 
-const clientChannel = z.enum(["MOBILE", "DESKTOP"]);
+/** Older employee web builds sent WEB (and sometimes the OS name). Treat those as desktop. */
+export function normalizeAttendanceClientChannel(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  const normalized = value.trim().toUpperCase();
+  if (
+    normalized === "WEB" ||
+    normalized === "WINDOWS" ||
+    normalized === "LINUX" ||
+    normalized === "MACOS" ||
+    normalized === "FUCHSIA"
+  ) {
+    return "DESKTOP";
+  }
+  if (normalized === "ANDROID" || normalized === "IOS") return "MOBILE";
+  return normalized;
+}
+
+const clientChannel = z.preprocess(normalizeAttendanceClientChannel, z.enum(["MOBILE", "DESKTOP"]));
 const locationFields = {
   latitude: z.number().min(-90).max(90).optional(),
   longitude: z.number().min(-180).max(180).optional(),

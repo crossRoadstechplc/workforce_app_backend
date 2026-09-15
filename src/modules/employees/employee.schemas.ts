@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { easyPasswordSchema } from "../../shared/password.js";
 
 const employeeStatus = z.enum(["ACTIVE", "INACTIVE", "TERMINATED"]);
 const userStatus = z.enum(["ACTIVE", "INACTIVE"]);
@@ -22,7 +23,7 @@ export const createEmployeeSchema = z.object({
   officeId: z.string().uuid().optional().nullable(),
   scheduleId: z.string().uuid().optional().nullable(),
   supervisorId: z.string().uuid().optional().nullable(),
-  temporaryPassword: z.string().min(10).max(128).optional()
+  temporaryPassword: easyPasswordSchema.optional()
 });
 
 export const updateEmployeeSchema = z.object({
@@ -48,7 +49,7 @@ export const employeeStatusSchema = z.object({
 });
 
 export const resetPasswordSchema = z.object({
-  temporaryPassword: z.string().min(10).max(128).optional(),
+  temporaryPassword: easyPasswordSchema.optional(),
   reason: z.string().trim().min(3).max(500)
 });
 

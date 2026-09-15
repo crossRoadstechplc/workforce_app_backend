@@ -1,17 +1,19 @@
 import { randomBytes } from "node:crypto";
+import { z } from "zod";
 
-const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%";
+const EASY_ALPHABET = "abcdefghijkmnopqrstuvwxyz23456789";
 
-export function generateTemporaryPassword(length = 16): string {
+export const EASY_PASSWORD_MIN_LENGTH = 6;
+export const EASY_PASSWORD_MESSAGE = "Password must be at least 6 characters";
+
+export const easyPasswordSchema = z.string().min(EASY_PASSWORD_MIN_LENGTH, EASY_PASSWORD_MESSAGE).max(128);
+
+export function generateTemporaryPassword(length = 8): string {
   const bytes = randomBytes(length);
-  return Array.from(bytes, (value) => ALPHABET[value % ALPHABET.length]).join("");
+  return Array.from(bytes, (value) => EASY_ALPHABET[value % EASY_ALPHABET.length]).join("");
 }
 
-/** Memorable temp password derived from employee code, e.g. TEF001@Temp1 */
-export function generateMemorableTemporaryPassword(employeeCode: string): string {
-  const code = employeeCode.trim().toUpperCase().replace(/\s+/g, "") || "EMP";
-  let password = `${code}@Temp1`;
-  if (password.length < 10) password = `${password}${"1".repeat(10 - password.length)}`;
-  return password;
+/** Temporary employee password. Kept for call-site compatibility. */
+export function generateMemorableTemporaryPassword(_employeeCode?: string): string {
+  return generateTemporaryPassword();
 }
-

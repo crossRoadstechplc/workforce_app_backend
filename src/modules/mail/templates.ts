@@ -75,10 +75,10 @@ export function orgAdminInviteEmail(input: {
     ...layout({
       title: `Join ${companyName}`,
       introHtml: requiresPassword
-        ? `You have been invited as company administrator for <strong>${escapeHtml(companyName)}</strong>. Open the link below to set your password and sign in.`
+        ? `You have been invited as company administrator for <strong>${escapeHtml(companyName)}</strong>. Open the link below to set your password (at least 6 characters — letters or numbers are fine) and sign in.`
         : `You have been invited as company administrator for <strong>${escapeHtml(companyName)}</strong>. You already have a Workforce account — open the link to confirm access, then sign in with your existing password.`,
       introText: requiresPassword
-        ? `You have been invited as company administrator for ${companyName}. Open the link below to set your password and sign in.`
+        ? `You have been invited as company administrator for ${companyName}. Open the link below to set your password (at least 6 characters — letters or numbers are fine) and sign in.`
         : `You have been invited as company administrator for ${companyName}. You already have a Workforce account — open the link to confirm access, then sign in with your existing password.`,
       buttonLabel: requiresPassword ? "Set your password" : "Confirm access",
       href: input.href,
@@ -102,10 +102,10 @@ export function officeAdminInviteEmail(input: {
     ...layout({
       title: "Office administrator access",
       introHtml: requiresPassword
-        ? `You have been invited as office administrator for <strong>${escapeHtml(officeNames)}</strong> at <strong>${escapeHtml(companyName)}</strong>. Open the link below to set your password and sign in.`
+        ? `You have been invited as office administrator for <strong>${escapeHtml(officeNames)}</strong> at <strong>${escapeHtml(companyName)}</strong>. Open the link below to set your password (at least 6 characters — letters or numbers are fine) and sign in.`
         : `Office administrator access for <strong>${escapeHtml(officeNames)}</strong> at <strong>${escapeHtml(companyName)}</strong> was added to your existing Workforce account. Open the link to confirm, then sign in with your existing password and choose Office Admin.`,
       introText: requiresPassword
-        ? `You have been invited as office administrator for ${officeNames} at ${companyName}. Open the link below to set your password and sign in.`
+        ? `You have been invited as office administrator for ${officeNames} at ${companyName}. Open the link below to set your password (at least 6 characters — letters or numbers are fine) and sign in.`
         : `Office administrator access for ${officeNames} at ${companyName} was added to your existing Workforce account. Open the link to confirm, then sign in with your existing password and choose Office Admin.`,
       buttonLabel: requiresPassword ? "Set your password" : "Confirm access",
       href: input.href,
@@ -128,10 +128,10 @@ export function employeeInviteEmail(input: {
     ...layout({
       title: "Complete your employee profile",
       introHtml: requiresPassword
-        ? `<strong>${escapeHtml(companyName)}</strong> invited you to complete your employee profile. Open the form, enter your details, and choose a password to create your account.`
+        ? `<strong>${escapeHtml(companyName)}</strong> invited you to complete your employee profile. Open the form, enter your details, and choose a password of at least 6 characters. Letters or numbers are fine — uppercase is not required.`
         : `<strong>${escapeHtml(companyName)}</strong> invited you to add an employee profile to your existing Workforce account. Open the form and enter your details — keep using your existing password.`,
       introText: requiresPassword
-        ? `${companyName} invited you to complete your employee profile. Open the form, enter your details, and choose a password to create your account.`
+        ? `${companyName} invited you to complete your employee profile. Open the form, enter your details, and choose a password of at least 6 characters. Letters or numbers are fine — uppercase is not required.`
         : `${companyName} invited you to add an employee profile to your existing Workforce account. Open the form and enter your details — keep using your existing password.`,
       buttonLabel: requiresPassword ? "Complete your profile" : "Continue",
       href: input.href,

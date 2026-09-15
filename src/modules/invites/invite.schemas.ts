@@ -1,6 +1,7 @@
 import { z } from "zod";
+import { easyPasswordSchema } from "../../shared/password.js";
 
-export const invitePasswordSchema = z.string().min(10).regex(/[A-Z]/).regex(/[a-z]/).regex(/[0-9]/);
+export const invitePasswordSchema = easyPasswordSchema;
 
 export const inviteTokenParamsSchema = z.object({
   token: z.string().min(20)
