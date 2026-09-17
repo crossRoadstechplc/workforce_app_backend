@@ -211,7 +211,8 @@ export const rosterService = {
 
     const counts = {
       totalEmployees: items.length,
-      checkedIn: items.filter((r) => !!r.timesheet && r.timesheet.isOpen && !r.timesheet.isMissingCheckout).length,
+      // Attended that day (any timesheet). Do not require isOpen — past days are almost all checked out.
+      checkedIn: items.filter((r) => !!r.timesheet).length,
       checkedOut: items.filter((r) => !!r.timesheet?.actualCheckOut && !r.timesheet.isOpen).length,
       late: items.filter((r) => r.timesheet?.isLate).length,
       onLeave: items.filter((r) => r.attendanceState === "ON_LEAVE").length,
@@ -224,16 +225,22 @@ export const rosterService = {
     return { date: input.date, items: filtered, counts };
   },
 
-  async attendanceMonthSummary(
+  async attendancePeriodSummary(
     organizationId: string,
-    input: { year: number; month: number; officeId?: string },
+    input: { from: string; to: string; officeId?: string },
     scope: OfficeScope
   ) {
-    assertNotFutureMonth(input.year, input.month);
-    const monthStart = DateTime.utc(input.year, input.month, 1).startOf("day");
-    const monthEnd = monthStart.plus({ months: 1 });
+    const rangeStart = DateTime.fromISO(input.from, { zone: "utc" }).startOf("day");
+    const rangeEnd = DateTime.fromISO(input.to, { zone: "utc" }).startOf("day");
+    if (!rangeStart.isValid || !rangeEnd.isValid) throw new AppError(422, "INVALID_DATE", "Invalid date");
+    if (rangeStart > rangeEnd) throw new AppError(422, "INVALID_DATE_RANGE", "from must be on or before to");
+
     const today = DateTime.utc().startOf("day");
-    const lastDay = monthEnd.minus({ days: 1 }) > today ? today : monthEnd.minus({ days: 1 });
+    if (rangeStart > today) throw new AppError(422, "FUTURE_DATE_NOT_ALLOWED", "Cannot view future dates");
+    const lastDay = rangeEnd > today ? today : rangeEnd;
+    if (lastDay.diff(rangeStart, "days").days > 92) {
+      throw new AppError(422, "DATE_RANGE_TOO_LARGE", "Date range cannot exceed 92 days");
+    }
 
     const employees = await prisma.employee.findMany({
       where: employeeWhere(organizationId, scope, input.officeId),
@@ -246,8 +253,8 @@ export const rosterService = {
     });
 
     const employeeIds = employees.map((e) => e.id);
-    const start = monthStart.toJSDate();
-    const endExclusive = monthEnd.toJSDate();
+    const start = rangeStart.toJSDate();
+    const endExclusive = lastDay.plus({ days: 1 }).toJSDate();
 
     const [timesheets, approvedLeaves] = await prisma.$transaction([
       prisma.timesheet.findMany({
@@ -298,7 +305,7 @@ export const rosterService = {
       const empLeaves = leavesByEmployee.get(e.id) ?? [];
       const timesheetByDate = new Map(empTimesheets.map((t) => [formatWorkDateKey(t.workDate), t]));
 
-      for (let d = monthStart; d <= lastDay; d = d.plus({ days: 1 })) {
+      for (let d = rangeStart; d <= lastDay; d = d.plus({ days: 1 })) {
         const key = d.toISODate()!;
         const weekday = d.weekday;
         if (!isWorkingDay(e.schedule, weekday)) continue;
@@ -360,13 +367,43 @@ export const rosterService = {
     };
 
     return {
-      year: input.year,
-      month: input.month,
-      from: monthStart.toISODate(),
-      to: lastDay.toISODate(),
+      from: rangeStart.toISODate()!,
+      to: lastDay.toISODate()!,
       items,
       counts
     };
+  },
+
+  async attendanceMonthSummary(
+    organizationId: string,
+    input: { year: number; month: number; officeId?: string },
+    scope: OfficeScope
+  ) {
+    assertNotFutureMonth(input.year, input.month);
+    const monthStart = DateTime.utc(input.year, input.month, 1).startOf("day");
+    const monthEnd = monthStart.plus({ months: 1 }).minus({ days: 1 });
+    const today = DateTime.utc().startOf("day");
+    const lastDay = monthEnd > today ? today : monthEnd;
+
+    const period = await this.attendancePeriodSummary(
+      organizationId,
+      { from: monthStart.toISODate()!, to: lastDay.toISODate()!, officeId: input.officeId },
+      scope
+    );
+
+    return {
+      year: input.year,
+      month: input.month,
+      ...period
+    };
+  },
+
+  async attendanceRangeSummary(
+    organizationId: string,
+    input: { from: string; to: string; officeId?: string },
+    scope: OfficeScope
+  ) {
+    return this.attendancePeriodSummary(organizationId, input, scope);
   },
 
   async leaveDayRoster(

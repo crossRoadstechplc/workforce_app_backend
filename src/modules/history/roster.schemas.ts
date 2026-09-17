@@ -18,6 +18,16 @@ export const monthSummarySchema = z.object({
   })
 });
 
+export const rangeSummarySchema = z.object({
+  query: z
+    .object({
+      from: isoDate,
+      to: isoDate,
+      officeId: z.string().uuid().optional()
+    })
+    .refine((q) => q.from <= q.to, { message: "from must be on or before to", path: ["from"] })
+});
+
 export const leaveDayRosterSchema = z.object({
   query: z.object({
     date: isoDate,

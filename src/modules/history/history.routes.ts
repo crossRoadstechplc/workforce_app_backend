@@ -10,6 +10,7 @@ import {
   adminWorksheets,
   attendanceDayRoster,
   attendanceMonthSummary,
+  attendanceRangeSummary,
   correctTimesheet,
   createMyWorksheet,
   leaveDayRoster,
@@ -37,6 +38,7 @@ import {
   dayRosterSchema,
   leaveDayRosterSchema,
   monthSummarySchema,
+  rangeSummarySchema,
   worksheetDayRosterSchema
 } from "./roster.schemas.js";
 
@@ -66,6 +68,7 @@ adminAttendanceRosterRouter.get("/config", requirePermission("attendance.view_al
 adminAttendanceRosterRouter.patch("/config", requireOrgAdmin, requirePermission("attendance.view_all"), validate(attendanceConfigUpdateSchema), updateAdminAttendanceConfig);
 adminAttendanceRosterRouter.get("/day-roster", requirePermission("attendance.view_all"), validate(dayRosterSchema), attendanceDayRoster);
 adminAttendanceRosterRouter.get("/month-summary", requirePermission("attendance.view_all"), validate(monthSummarySchema), attendanceMonthSummary);
+adminAttendanceRosterRouter.get("/range-summary", requirePermission("attendance.view_all"), validate(rangeSummarySchema), attendanceRangeSummary);
 
 export const adminLeaveRosterRouter = Router();
 adminLeaveRosterRouter.use(authenticate, requireNormalSession, requireOrgContext);

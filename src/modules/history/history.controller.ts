@@ -142,6 +142,21 @@ export const attendanceMonthSummary: RequestHandler = async (req, res, next) => 
   }
 };
 
+export const attendanceRangeSummary: RequestHandler = async (req, res, next) => {
+  try {
+    const scope = getOfficeScope(req.auth);
+    res.json({
+      data: await rosterService.attendanceRangeSummary(
+        requireOrganizationId(req.auth),
+        { from: String(req.query.from), to: String(req.query.to), officeId: req.query.officeId as string | undefined },
+        scope
+      )
+    });
+  } catch (e) {
+    next(e);
+  }
+};
+
 export const leaveDayRoster: RequestHandler = async (req, res, next) => {
   try {
     const scope = getOfficeScope(req.auth);
