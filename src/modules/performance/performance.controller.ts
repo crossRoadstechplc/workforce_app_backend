@@ -170,6 +170,16 @@ export const closeCycle: RequestHandler = async (req, res, next) => {
   }
 };
 
+export const deleteCycle: RequestHandler = async (req, res, next) => {
+  try {
+    res.json({
+      data: await performanceService.deleteCycle(requireOrganizationId(req.auth), paramId(req.params.id!), auditContextFromRequest(req))
+    });
+  } catch (e) {
+    next(e);
+  }
+};
+
 export const exportCycle: RequestHandler = async (req, res, next) => {
   try {
     const scope = getOfficeScope(req.auth);

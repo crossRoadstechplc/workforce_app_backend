@@ -1067,6 +1067,31 @@ export const performanceService = {
     return { ...updated, periodStart: dateKey(updated.periodStart), periodEnd: dateKey(updated.periodEnd) };
   },
 
+  async deleteCycle(organizationId: string, cycleId: string, audit: AuditContext) {
+    const cycle = await prisma.evaluationCycle.findFirst({
+      where: { id: cycleId, organizationId },
+      include: { _count: { select: { evaluations: true } } }
+    });
+    if (!cycle) throw new AppError(404, "CYCLE_NOT_FOUND", "Evaluation cycle not found");
+    if (cycle.status !== "DRAFT") throw new AppError(409, "CYCLE_NOT_DRAFT", "Only draft cycles can be deleted");
+    if (cycle._count.evaluations > 0) {
+      throw new AppError(409, "CYCLE_HAS_EVALUATIONS", "Cannot delete a cycle that has evaluations");
+    }
+    await prisma.evaluationCycle.delete({ where: { id: cycleId } });
+    await prisma.auditLog.create({
+      data: {
+        actorUserId: audit.actorUserId,
+        action: "EVALUATION_CYCLE_DELETED",
+        entityType: "EvaluationCycle",
+        entityId: cycleId,
+        oldValues: auditJson({ name: cycle.name, status: cycle.status }),
+        ipAddress: audit.ipAddress,
+        userAgent: audit.userAgent
+      }
+    });
+    return { id: cycleId };
+  },
+
   async exportCycle(organizationId: string, cycleId: string, scope: OfficeScope) {
     const cycle = await prisma.evaluationCycle.findFirst({ where: { id: cycleId, organizationId } });
     if (!cycle) throw new AppError(404, "CYCLE_NOT_FOUND", "Evaluation cycle not found");

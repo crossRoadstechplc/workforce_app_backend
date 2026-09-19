@@ -10,6 +10,7 @@ import {
   adminTemplates,
   closeCycle,
   createCycle,
+  deleteCycle,
   createTemplate,
   exportCycle,
   finalizeEvaluation,
@@ -57,6 +58,7 @@ adminEvaluationRouter.get("/cycles/:id", requirePermission("evaluation.view_offi
 adminEvaluationRouter.post("/cycles", requireOrgAdmin, requirePermission("evaluation.cycle.manage"), validate(createCycleSchema), createCycle);
 adminEvaluationRouter.post("/cycles/:id/open", requireOrgAdmin, requirePermission("evaluation.cycle.manage"), validate(openCycleSchema), openCycle);
 adminEvaluationRouter.post("/cycles/:id/close", requireOrgAdmin, requirePermission("evaluation.cycle.manage"), validate(cycleIdSchema), closeCycle);
+adminEvaluationRouter.delete("/cycles/:id", requireOrgAdmin, requirePermission("evaluation.cycle.manage"), validate(cycleIdSchema), deleteCycle);
 adminEvaluationRouter.get("/cycles/:id/export", requirePermission("evaluation.cycle.manage"), validate(cycleExportSchema), exportCycle);
 adminEvaluationRouter.get("/", requirePermission("evaluation.view_office"), validate(adminEvaluationListSchema), adminEvaluations);
 adminEvaluationRouter.get("/:id", requirePermission("evaluation.view_office"), validate(evaluationIdSchema), adminEvaluation);
