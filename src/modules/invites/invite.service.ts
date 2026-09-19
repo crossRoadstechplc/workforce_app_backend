@@ -51,6 +51,54 @@ async function assertNoPendingInvite(organizationId: string, email: string, type
   if (pending) throw new AppError(409, "INVITE_PENDING", "A pending invite already exists for this email");
 }
 
+async function assertNoOtherPendingInvite(
+  organizationId: string,
+  email: string,
+  type: InviteType,
+  excludeInviteId: string,
+  tx: Tx | typeof prisma = prisma
+) {
+  const pending = await tx.invite.findFirst({
+    where: { organizationId, email: normalizeEmail(email), type, status: "PENDING", id: { not: excludeInviteId } }
+  });
+  if (pending) throw new AppError(409, "INVITE_PENDING", "A pending invite already exists for this email");
+}
+
+async function validateEmployeeInviteAssignments(
+  organizationId: string,
+  input: {
+    officeId?: string | null;
+    scheduleId?: string | null;
+    departmentId?: string | null;
+    evaluationTemplateId?: string | null;
+  }
+) {
+  if (input.officeId) {
+    const office = await prisma.office.findUnique({ where: { id: input.officeId } });
+    if (!office || !office.isActive || office.organizationId !== organizationId) {
+      throw new AppError(400, "INVALID_OFFICE", "Office does not exist or is inactive");
+    }
+  }
+  if (input.scheduleId) {
+    const schedule = await prisma.workSchedule.findUnique({ where: { id: input.scheduleId } });
+    if (!schedule || !schedule.isActive || schedule.organizationId !== organizationId) {
+      throw new AppError(400, "INVALID_SCHEDULE", "Schedule does not exist or is inactive");
+    }
+  }
+  if (input.departmentId) {
+    const department = await prisma.department.findUnique({ where: { id: input.departmentId } });
+    if (!department || !department.isActive || department.organizationId !== organizationId) {
+      throw new AppError(400, "INVALID_DEPARTMENT", "Department does not exist or is inactive");
+    }
+  }
+  if (input.evaluationTemplateId) {
+    const template = await prisma.evaluationTemplate.findUnique({ where: { id: input.evaluationTemplateId } });
+    if (!template || !template.isActive || template.organizationId !== organizationId) {
+      throw new AppError(400, "INVALID_EVALUATION_TEMPLATE", "Evaluation template does not exist or is inactive");
+    }
+  }
+}
+
 export async function createInviteInTx(
   tx: Tx,
   input: {
@@ -334,30 +382,7 @@ export const inviteService = {
     scope: OfficeScope
   ) {
     assertOfficeInScope(scope, input.officeId ?? undefined, "You can only invite employees to offices you manage");
-    if (input.officeId) {
-      const office = await prisma.office.findUnique({ where: { id: input.officeId } });
-      if (!office || !office.isActive || office.organizationId !== organizationId) {
-        throw new AppError(400, "INVALID_OFFICE", "Office does not exist or is inactive");
-      }
-    }
-    if (input.scheduleId) {
-      const schedule = await prisma.workSchedule.findUnique({ where: { id: input.scheduleId } });
-      if (!schedule || !schedule.isActive || schedule.organizationId !== organizationId) {
-        throw new AppError(400, "INVALID_SCHEDULE", "Schedule does not exist or is inactive");
-      }
-    }
-    if (input.departmentId) {
-      const department = await prisma.department.findUnique({ where: { id: input.departmentId } });
-      if (!department || !department.isActive || department.organizationId !== organizationId) {
-        throw new AppError(400, "INVALID_DEPARTMENT", "Department does not exist or is inactive");
-      }
-    }
-    if (input.evaluationTemplateId) {
-      const template = await prisma.evaluationTemplate.findUnique({ where: { id: input.evaluationTemplateId } });
-      if (!template || !template.isActive || template.organizationId !== organizationId) {
-        throw new AppError(400, "INVALID_EVALUATION_TEMPLATE", "Evaluation template does not exist or is inactive");
-      }
-    }
+    await validateEmployeeInviteAssignments(organizationId, input);
 
     const { invite, token } = await prisma.$transaction((tx) =>
       createInviteInTx(tx, {
@@ -449,5 +474,134 @@ export const inviteService = {
     });
     const delivery = await deliverInvite(updated, token);
     return { invite: updated, inviteId: updated.id, ...delivery };
+  },
+
+  async updateEmployeeInvite(
+    auth: AuthContext,
+    inviteId: string,
+    input: {
+      email?: string;
+      officeId?: string | null;
+      scheduleId?: string | null;
+      employmentStartDate?: Date;
+      jobTitle?: string | null;
+      departmentId?: string | null;
+      evaluationTemplateId?: string | null;
+    },
+    audit: AuditContext,
+    scope: OfficeScope
+  ) {
+    const invite = await prisma.invite.findUnique({ where: { id: inviteId }, include: inviteInclude });
+    if (!invite) throw new AppError(404, "INVITE_NOT_FOUND", "Invite was not found");
+    assertCanManageInvite(auth, invite);
+    if (invite.type !== "EMPLOYEE") {
+      throw new AppError(400, "INVITE_TYPE_MISMATCH", "Only employee invites can be updated here");
+    }
+    if (invite.status !== "PENDING") {
+      throw new AppError(400, "INVITE_NOT_EDITABLE", "Only pending invites can be edited");
+    }
+
+    const nextOfficeId = input.officeId !== undefined ? input.officeId : invite.officeId;
+    assertOfficeInScope(scope, nextOfficeId ?? undefined, "You can only assign employees to offices you manage");
+    await validateEmployeeInviteAssignments(invite.organizationId, {
+      officeId: input.officeId ?? undefined,
+      scheduleId: input.scheduleId ?? undefined,
+      departmentId: input.departmentId ?? undefined,
+      evaluationTemplateId: input.evaluationTemplateId ?? undefined
+    });
+
+    const nextEmail = input.email ? normalizeEmail(input.email) : invite.email;
+    const emailChanged = nextEmail !== invite.email;
+    if (emailChanged) {
+      await assertNoOtherPendingInvite(invite.organizationId, nextEmail, "EMPLOYEE", invite.id);
+      await assertCanInviteEmployee(nextEmail, invite.organizationId);
+    }
+
+    const currentPayload = (invite.payload ?? {}) as {
+      employmentStartDate?: string;
+      jobTitle?: string | null;
+      departmentId?: string | null;
+      evaluationTemplateId?: string | null;
+    };
+    const nextPayload = {
+      ...currentPayload,
+      ...(input.employmentStartDate !== undefined
+        ? { employmentStartDate: input.employmentStartDate.toISOString().slice(0, 10) }
+        : {}),
+      ...(input.jobTitle !== undefined ? { jobTitle: input.jobTitle } : {}),
+      ...(input.departmentId !== undefined ? { departmentId: input.departmentId } : {}),
+      ...(input.evaluationTemplateId !== undefined ? { evaluationTemplateId: input.evaluationTemplateId } : {})
+    };
+
+    let token: string | null = null;
+    const updated = await prisma.invite.update({
+      where: { id: invite.id },
+      data: {
+        email: nextEmail,
+        ...(input.officeId !== undefined ? { officeId: input.officeId } : {}),
+        ...(input.scheduleId !== undefined ? { scheduleId: input.scheduleId } : {}),
+        payload: nextPayload,
+        ...(emailChanged
+          ? {
+              tokenHash: hashInviteToken((token = createInviteToken())),
+              expiresAt: inviteExpiresAt()
+            }
+          : {})
+      },
+      include: inviteInclude
+    });
+
+    await prisma.auditLog.create({
+      data: {
+        actorUserId: audit.actorUserId,
+        action: "EMPLOYEE_INVITE_UPDATED",
+        entityType: "Invite",
+        entityId: invite.id,
+        newValues: auditJson({
+          email: updated.email,
+          previousEmail: emailChanged ? invite.email : undefined,
+          officeId: updated.officeId,
+          scheduleId: updated.scheduleId
+        }),
+        ipAddress: audit.ipAddress,
+        userAgent: audit.userAgent
+      }
+    });
+
+    if (emailChanged && token) {
+      const delivery = await deliverInvite(updated, token);
+      return { invite: updated, inviteId: updated.id, emailChanged: true as const, ...delivery };
+    }
+
+    return { invite: updated, inviteId: updated.id, emailChanged: false as const, emailSent: false as const };
+  },
+
+  async cancel(auth: AuthContext, inviteId: string, audit: AuditContext) {
+    const invite = await prisma.invite.findUnique({ where: { id: inviteId }, include: inviteInclude });
+    if (!invite) throw new AppError(404, "INVITE_NOT_FOUND", "Invite was not found");
+    assertCanManageInvite(auth, invite);
+    if (invite.status !== "PENDING" && invite.status !== "EXPIRED") {
+      throw new AppError(400, "INVITE_NOT_CANCELLABLE", "Only pending or expired invites can be cancelled");
+    }
+
+    const updated = await prisma.invite.update({
+      where: { id: invite.id },
+      data: { status: "CANCELLED" },
+      include: inviteInclude
+    });
+
+    await prisma.auditLog.create({
+      data: {
+        actorUserId: audit.actorUserId,
+        action: "INVITE_CANCELLED",
+        entityType: "Invite",
+        entityId: invite.id,
+        newValues: auditJson({ email: invite.email, type: invite.type }),
+        ipAddress: audit.ipAddress,
+        userAgent: audit.userAgent
+      }
+    });
+
+    return { invite: updated };
   }
 };

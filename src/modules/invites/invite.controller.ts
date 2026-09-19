@@ -10,7 +10,8 @@ import {
   createEmployeeInviteSchema,
   inviteIdParamsSchema,
   inviteListSchema,
-  inviteTokenParamsSchema
+  inviteTokenParamsSchema,
+  updateEmployeeInviteSchema
 } from "./invite.schemas.js";
 
 export const getInvite: RequestHandler = async (req, res) => {
@@ -45,4 +46,17 @@ export const resendInvite: RequestHandler = async (req, res) => {
   if (!req.auth) throw new AppError(401, "AUTH_REQUIRED", "Authentication required");
   const { id } = inviteIdParamsSchema.parse(req.params);
   res.json(await inviteService.resend(req.auth, id));
+};
+
+export const updateEmployeeInvite: RequestHandler = async (req, res) => {
+  if (!req.auth) throw new AppError(401, "AUTH_REQUIRED", "Authentication required");
+  const { id } = inviteIdParamsSchema.parse(req.params);
+  const body = updateEmployeeInviteSchema.parse(req.body);
+  res.json(await inviteService.updateEmployeeInvite(req.auth, id, body, auditContextFromRequest(req), getOfficeScope(req.auth)));
+};
+
+export const cancelInvite: RequestHandler = async (req, res) => {
+  if (!req.auth) throw new AppError(401, "AUTH_REQUIRED", "Authentication required");
+  const { id } = inviteIdParamsSchema.parse(req.params);
+  res.json(await inviteService.cancel(req.auth, id, auditContextFromRequest(req)));
 };
