@@ -23,6 +23,8 @@ const schema = z.object({
   REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().default(14),
   DISPLAY_REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().default(90),
   MISSING_CHECKOUT_GRACE_MINUTES: z.coerce.number().int().min(0).default(120),
+  ATTENDANCE_REMINDER_MINUTES: z.coerce.number().int().min(1).max(60).default(5),
+  ATTENDANCE_REMINDER_SLACK_MINUTES: z.coerce.number().int().min(1).max(30).default(3),
   FIREBASE_PROJECT_ID: emptyToUndefined,
   FIREBASE_CLIENT_EMAIL: emptyToUndefined,
   FIREBASE_PRIVATE_KEY: emptyToUndefined,

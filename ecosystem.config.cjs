@@ -44,6 +44,20 @@ module.exports = {
       merge_logs: true,
       out_file: "logs/missing-checkouts-out.log",
       error_file: "logs/missing-checkouts-error.log"
+    },
+    {
+      name: "workforce-attendance-reminders",
+      script: "dist/src/jobs/attendance-reminders.js",
+      cwd: __dirname,
+      exec_mode: "fork",
+      instances: 1,
+      env: { NODE_ENV: "production" },
+      autorestart: false,
+      cron_restart: "*/5 * * * *",
+      time: true,
+      merge_logs: true,
+      out_file: "logs/attendance-reminders-out.log",
+      error_file: "logs/attendance-reminders-error.log"
     }
   ]
 };
