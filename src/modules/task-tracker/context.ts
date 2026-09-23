@@ -1,4 +1,5 @@
 import { prisma } from "../../database/prisma.js";
+import { ensureTtWorkspace } from "./workspace-bootstrap.js";
 
 export async function getWorkspaceByOrganizationId(organizationId: string) {
   return prisma.ttWorkspace.findUnique({
@@ -6,13 +7,9 @@ export async function getWorkspaceByOrganizationId(organizationId: string) {
   });
 }
 
+/** Returns the org workspace, creating it on first use (Task Ops is always on). */
 export async function requireWorkspaceByOrganizationId(organizationId: string) {
-  const workspace = await getWorkspaceByOrganizationId(organizationId);
-  if (!workspace) {
-    const { AppError } = await import("../../shared/errors/app-error.js");
-    throw new AppError(404, "TRACKER_NOT_ENABLED", "Task tracker is not enabled for this organization");
-  }
-  return workspace;
+  return ensureTtWorkspace(organizationId);
 }
 
 export async function getStaffIdByDisplayName(workspaceId: string, displayName: string): Promise<string | null> {

@@ -255,6 +255,16 @@ export const employeeService = {
       include: employeeInclude
     });
 
+    // Keep Task Operations Team Members in sync (auto-enables workspace if needed).
+    // Fire-and-forget so admin create is not blocked by Neon latency; workspace load also syncs.
+    void import("../task-tracker/staff-sync.service.js")
+      .then(({ syncWorkforceStaffForOrganization }) => {
+        console.log("[tt-staff-sync] background sync after employee create", { organizationId });
+        return syncWorkforceStaffForOrganization(organizationId);
+      })
+      .then(() => console.log("[tt-staff-sync] background sync after employee create done", { organizationId }))
+      .catch((err) => console.error("[tt-staff-sync] background sync after employee create failed", err));
+
     return {
       employee: withSupervisorAccess(employee),
       temporaryPassword: created.temporaryPassword,
@@ -349,6 +359,11 @@ export const employeeService = {
         }
       });
       return withSupervisorAccess(updated);
+    }).then(async (updated) => {
+      void import("../task-tracker/staff-sync.service.js")
+        .then(({ syncWorkforceStaffForOrganization }) => syncWorkforceStaffForOrganization(organizationId))
+        .catch(() => undefined);
+      return updated;
     });
   },
 
@@ -361,7 +376,7 @@ export const employeeService = {
   ) {
     const current = await this.get(organizationId, employeeId, scope);
     const desiredUserStatus = input.userStatus ?? (input.employeeStatus === "ACTIVE" ? "ACTIVE" : "INACTIVE");
-    return prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       const employee = await tx.employee.update({ where: { id: employeeId }, data: { status: input.employeeStatus }, include: employeeInclude });
       await tx.user.update({ where: { id: current.userId }, data: { status: desiredUserStatus } });
       if (desiredUserStatus !== "ACTIVE") {
@@ -382,6 +397,14 @@ export const employeeService = {
       });
       return withSupervisorAccess(employee);
     });
+
+    if (input.employeeStatus === "ACTIVE") {
+      void import("../task-tracker/staff-sync.service.js")
+        .then(({ syncWorkforceStaffForOrganization }) => syncWorkforceStaffForOrganization(organizationId))
+        .catch(() => undefined);
+    }
+
+    return result;
   },
 
   async resetPassword(organizationId: string, employeeId: string, input: { temporaryPassword?: string; reason: string }, audit: AuditContext, scope: OfficeScope) {

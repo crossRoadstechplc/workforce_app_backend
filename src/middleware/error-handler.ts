@@ -29,6 +29,16 @@ export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
       }
     });
   }
+  if (isPrismaKnownError(err) && (err.code === "P2022" || err.code === "P2017")) {
+    return res.status(503).json({
+      error: {
+        code: "SCHEMA_OUT_OF_DATE",
+        message: "Database schema is behind the API. Run: npx prisma migrate deploy",
+        details: err.meta,
+        requestId: req.id
+      }
+    });
+  }
   logger.error({ err, requestId: req.id }, "Unhandled error");
   return res.status(500).json({ error: { code: "INTERNAL_ERROR", message: "Unexpected server error", requestId: req.id } });
 };

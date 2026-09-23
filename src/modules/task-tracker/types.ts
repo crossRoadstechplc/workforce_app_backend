@@ -14,6 +14,13 @@ export type StaffProfile = {
   permissionRole: PermissionRoleLabel;
   email?: string;
   inviteStatus?: "pending" | "active";
+  /** Workforce department name (read-only from HR). */
+  department?: string;
+  /** Workforce office name (read-only from HR). */
+  office?: string;
+  /** Workforce identity role — independent of tracker permissionRole. */
+  workforceRole?: "Org Admin" | "Office Admin" | "Employee";
+  employeeCode?: string;
 };
 
 export type TaskUpdate = {

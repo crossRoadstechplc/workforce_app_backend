@@ -5,48 +5,19 @@ import { PERMISSION_ROLE_TO_DB, toPermissionRoleLabel } from "./roles.js";
 import { mapStaffMemberResponse } from "./serialize.js";
 import type { ActorContext, PermissionRoleLabel } from "./types.js";
 
-export async function updateStaffMember(input: {
+export async function updateStaffMember(_input: {
   actor: ActorContext;
   staffId: string;
   firstName?: string;
   lastName?: string;
   jobTitle?: string;
   displayName?: string;
-}) {
-  const workspaceId = input.actor.workspaceId;
-  const member = await prisma.ttStaffMember.findFirst({
-    where: { id: input.staffId, workspaceId },
-    include: { user: { select: { email: true, mustChangePassword: true } } }
-  });
-  if (!member) throw new AppError(404, "STAFF_NOT_FOUND", "Staff member not found.");
-
-  const firstName = input.firstName ?? member.firstName;
-  const lastName = input.lastName ?? member.lastName;
-  const displayName =
-    input.displayName ?? ([firstName, lastName].filter(Boolean).join(" ").trim() || member.displayName);
-
-  const updated = await prisma.ttStaffMember.update({
-    where: { id: input.staffId },
-    data: {
-      firstName,
-      lastName,
-      displayName,
-      ...(input.jobTitle !== undefined ? { jobTitle: input.jobTitle } : {})
-    },
-    include: { user: { select: { email: true, mustChangePassword: true } } }
-  });
-
-  const published = await publishWorkspaceEvent({
-    type: "staff.updated",
-    workspaceId,
-    actorUserId: input.actor.userId,
-    actorClientId: input.actor.clientId ?? null,
-    resource: "staff",
-    resourceId: updated.id,
-    payload: mapStaffMemberResponse(updated)
-  });
-
-  return { staffMember: mapStaffMemberResponse(updated), revision: published.revision };
+}): Promise<never> {
+  throw new AppError(
+    400,
+    "STAFF_PROFILE_READ_ONLY",
+    "Name, job title, department, and office come from Workforce. Change tracker access with Permission Role only."
+  );
 }
 
 export async function updateStaffRole(input: {
@@ -82,112 +53,27 @@ export async function updateStaffRole(input: {
   return { staffMember: mapStaffMemberResponse(updated), revision: published.revision };
 }
 
-export async function deleteStaffMember(input: { actor: ActorContext; staffId: string }) {
-  const workspaceId = input.actor.workspaceId;
-  const member = await prisma.ttStaffMember.findFirst({
-    where: { id: input.staffId, workspaceId }
-  });
-  if (!member) throw new AppError(404, "STAFF_NOT_FOUND", "Staff member not found.");
-  if (member.id === input.actor.staffMemberId) {
-    throw new AppError(400, "CANNOT_REMOVE_SELF", "You cannot remove yourself.");
-  }
-
-  await prisma.ttStaffMember.delete({ where: { id: input.staffId } });
-
-  const published = await publishWorkspaceEvent({
-    type: "staff.deleted",
-    workspaceId,
-    actorUserId: input.actor.userId,
-    actorClientId: input.actor.clientId ?? null,
-    resource: "staff",
-    resourceId: input.staffId,
-    payload: { id: input.staffId, displayName: member.displayName }
-  });
-
-  return { revision: published.revision };
+export async function deleteStaffMember(_input: { actor: ActorContext; staffId: string }): Promise<never> {
+  throw new AppError(
+    400,
+    "STAFF_MANAGED_BY_WORKFORCE",
+    "Team members come from Workforce. Deactivate or manage people in the admin portal — they cannot be removed from Task Operations."
+  );
 }
 
-export async function createStaffFromUser(input: {
+export async function createStaffFromUser(_input: {
   actor: ActorContext;
   email: string;
   firstName: string;
   lastName?: string;
   jobTitle?: string;
   permissionRole?: string;
-}) {
-  const workspaceId = input.actor.workspaceId;
-  const email = input.email.trim().toLowerCase();
-  const workspace = await prisma.ttWorkspace.findUniqueOrThrow({
-    where: { id: workspaceId },
-    select: { organizationId: true }
-  });
-
-  const user = await prisma.user.findUnique({
-    where: { email },
-    include: {
-      employee: true,
-      memberships: { where: { organizationId: workspace.organizationId } }
-    }
-  });
-  if (!user || user.memberships.length === 0) {
-    throw new AppError(404, "USER_NOT_FOUND", "No organization user found with that email.");
-  }
-
-  const existing = await prisma.ttStaffMember.findUnique({
-    where: { workspaceId_userId: { workspaceId, userId: user.id } }
-  });
-  if (existing) throw new AppError(409, "STAFF_EXISTS", "Staff member already exists.");
-
-  const firstName = input.firstName.trim() || user.employee?.firstName || email.split("@")[0]!;
-  const lastName = input.lastName?.trim() ?? user.employee?.lastName ?? "";
-  let displayName = [firstName, lastName].filter(Boolean).join(" ").trim() || email;
-  const clash = await prisma.ttStaffMember.findUnique({
-    where: { workspaceId_displayName: { workspaceId, displayName } }
-  });
-  if (clash) displayName = `${displayName} (${email.split("@")[0]})`;
-
-  const maxSort = await prisma.ttStaffMember.aggregate({
-    where: { workspaceId },
-    _max: { sortOrder: true }
-  });
-
-  const created = await prisma.ttStaffMember.create({
-    data: {
-      workspaceId,
-      userId: user.id,
-      employeeId: user.employee?.id ?? null,
-      displayName,
-      firstName,
-      lastName,
-      jobTitle: input.jobTitle ?? user.employee?.jobTitle ?? "",
-      permissionRole: PERMISSION_ROLE_TO_DB[toPermissionRoleLabel(input.permissionRole ?? "Junior Staff")],
-      sortOrder: (maxSort._max.sortOrder ?? -1) + 1
-    },
-    include: { user: { select: { email: true, mustChangePassword: true } } }
-  });
-
-  const staffMember = mapStaffMemberResponse(created);
-  const published = await publishWorkspaceEvent({
-    type: "staff.updated",
-    workspaceId,
-    actorUserId: input.actor.userId,
-    actorClientId: input.actor.clientId ?? null,
-    resource: "staff",
-    resourceId: created.id,
-    payload: staffMember
-  });
-
-  return {
-    email,
-    acceptUrl: "",
-    message: "Staff member linked from existing workforce user.",
-    emailSent: false,
-    emailError: "Invites are managed by workforce; staff was linked to an existing user.",
-    inviteTtlHours: 0,
-    loginUrl: "",
-    staffMember: { ...staffMember, inviteStatus: "active" as const },
-    revision: published.revision
-  };
+}): Promise<never> {
+  throw new AppError(
+    410,
+    "TRACKER_INVITE_RETIRED",
+    "Inviting from Task Operations is disabled. Add people in Workforce; they appear here automatically with Junior Staff permission until you change their tracker role."
+  );
 }
 
 export async function updatePermissions(input: {

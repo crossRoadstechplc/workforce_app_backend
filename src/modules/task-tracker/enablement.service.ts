@@ -1,81 +1,25 @@
 import { prisma } from "../../database/prisma.js";
-import { AppError } from "../../shared/errors/app-error.js";
-import { ROLE, type AuthContext } from "../../shared/tenancy.js";
-import { DEFAULT_PERMISSION_MATRIX } from "./default-matrix.js";
+import type { AuthContext } from "../../shared/tenancy.js";
 import { ensureMembership } from "./membership.service.js";
-import { PERMISSION_ROLE_TO_DB, type TtPermissionRoleDb } from "./roles.js";
-import type { PermissionRoleLabel } from "./types.js";
-
-function seedPermissionRows(workspaceId: string) {
-  const rows: Array<{
-    workspaceId: string;
-    role: TtPermissionRoleDb;
-    actionId: string;
-    allowed: boolean;
-  }> = [];
-
-  for (const [roleLabel, actions] of Object.entries(DEFAULT_PERMISSION_MATRIX)) {
-    const role = PERMISSION_ROLE_TO_DB[roleLabel as PermissionRoleLabel];
-    for (const [actionId, allowed] of Object.entries(actions)) {
-      rows.push({ workspaceId, role, actionId, allowed: Boolean(allowed) });
-    }
-  }
-  return rows;
-}
-
-async function uniqueDisplayName(
-  used: Set<string>,
-  base: string,
-  email: string
-): Promise<string> {
-  if (!used.has(base)) {
-    used.add(base);
-    return base;
-  }
-  const suffix = email.split("@")[0] ?? "user";
-  let candidate = `${base} (${suffix})`;
-  let i = 2;
-  while (used.has(candidate)) {
-    candidate = `${base} (${suffix}-${i})`;
-    i += 1;
-  }
-  used.add(candidate);
-  return candidate;
-}
+import { syncWorkforceStaffToWorkspace } from "./staff-sync.service.js";
+import { ensureTtWorkspace } from "./workspace-bootstrap.js";
 
 export const enablementService = {
   async status(organizationId: string) {
-    const workspace = await prisma.ttWorkspace.findUnique({
-      where: { organizationId },
-      select: {
-        id: true,
-        name: true,
-        enabledAt: true,
-        revision: true,
-        _count: { select: { staffMembers: true } }
-      }
-    });
-    if (!workspace) {
-      return { enabled: false as const };
-    }
+    const workspace = await ensureTtWorkspace(organizationId);
+    const staffCount = await prisma.ttStaffMember.count({ where: { workspaceId: workspace.id } });
     return {
       enabled: true as const,
       workspaceId: workspace.id,
       name: workspace.name,
       enabledAt: workspace.enabledAt.toISOString(),
       revision: workspace.revision,
-      staffCount: workspace._count.staffMembers
+      staffCount
     };
   },
 
   async summary(organizationId: string) {
-    const workspace = await prisma.ttWorkspace.findUnique({
-      where: { organizationId },
-      select: { id: true, name: true, enabledAt: true, revision: true }
-    });
-    if (!workspace) {
-      return { enabled: false as const };
-    }
+    const workspace = await ensureTtWorkspace(organizationId);
 
     const today = new Date();
     const todayKey = today.toISOString().slice(0, 10);
@@ -183,7 +127,6 @@ export const enablementService = {
       .filter((task) => {
         const due = task.due.trim();
         if (!due) return false;
-        // due is stored as free-form string; prefer ISO / yyyy-mm-dd prefixes
         const key = due.slice(0, 10);
         return /^\d{4}-\d{2}-\d{2}$/.test(key) && key < todayKey;
       })
@@ -270,161 +213,14 @@ export const enablementService = {
     };
   },
 
+  /** Idempotent: Task Ops is always on; seeds workspace on first call. */
   async enable(organizationId: string, auth: AuthContext) {
-    const existing = await prisma.ttWorkspace.findUnique({ where: { organizationId } });
-    if (existing) {
-      throw new AppError(409, "TRACKER_ALREADY_ENABLED", "Task tracker is already enabled for this organization");
-    }
+    const workspace = await ensureTtWorkspace(organizationId);
 
-    const employees = await prisma.employee.findMany({
-      where: { organizationId, status: "ACTIVE" },
-      include: { user: { select: { id: true, email: true, status: true } } },
-      orderBy: [{ lastName: "asc" }, { firstName: "asc" }]
-    });
-
-    const orgAdmins = await prisma.user.findMany({
-      where: {
-        adminOrganizations: { some: { organizationId } },
-        status: "ACTIVE"
-      },
-      select: { id: true, email: true, employee: true }
-    });
-
-    const officeAdmins = await prisma.user.findMany({
-      where: {
-        adminOffices: { some: { office: { organizationId } } },
-        userRoles: { some: { role: { name: ROLE.OFFICE_ADMIN } } },
-        status: "ACTIVE"
-      },
-      select: { id: true, email: true, employee: true }
-    });
-
-    const usedNames = new Set<string>();
-    const staffByUserId = new Map<
-      string,
-      {
-        userId: string;
-        employeeId: string | null;
-        firstName: string;
-        lastName: string;
-        jobTitle: string;
-        displayName: string;
-        permissionRole: TtPermissionRoleDb;
-      }
-    >();
-
-    for (const employee of employees) {
-      if (employee.user.status !== "ACTIVE") continue;
-      const base = [employee.firstName, employee.lastName].filter(Boolean).join(" ").trim() || employee.user.email;
-      const displayName = await uniqueDisplayName(usedNames, base, employee.user.email);
-      staffByUserId.set(employee.userId, {
-        userId: employee.userId,
-        employeeId: employee.id,
-        firstName: employee.firstName,
-        lastName: employee.lastName,
-        jobTitle: employee.jobTitle ?? "",
-        displayName,
-        permissionRole: "JUNIOR_STAFF"
-      });
-    }
-
-    for (const admin of officeAdmins) {
-      const existingStaff = staffByUserId.get(admin.id);
-      if (existingStaff) {
-        existingStaff.permissionRole = "LEAD";
-        continue;
-      }
-      const firstName = admin.employee?.firstName ?? admin.email.split("@")[0] ?? "Admin";
-      const lastName = admin.employee?.lastName ?? "";
-      const base = [firstName, lastName].filter(Boolean).join(" ").trim() || admin.email;
-      const displayName = await uniqueDisplayName(usedNames, base, admin.email);
-      staffByUserId.set(admin.id, {
-        userId: admin.id,
-        employeeId: admin.employee?.id ?? null,
-        firstName,
-        lastName,
-        jobTitle: admin.employee?.jobTitle ?? "",
-        displayName,
-        permissionRole: "LEAD"
-      });
-    }
-
-    for (const admin of orgAdmins) {
-      const existingStaff = staffByUserId.get(admin.id);
-      if (existingStaff) {
-        existingStaff.permissionRole = admin.id === auth.userId ? "SUPER_ADMIN" : "ADMIN";
-        continue;
-      }
-      const firstName = admin.employee?.firstName ?? admin.email.split("@")[0] ?? "Admin";
-      const lastName = admin.employee?.lastName ?? "";
-      const base = [firstName, lastName].filter(Boolean).join(" ").trim() || admin.email;
-      const displayName = await uniqueDisplayName(usedNames, base, admin.email);
-      staffByUserId.set(admin.id, {
-        userId: admin.id,
-        employeeId: admin.employee?.id ?? null,
-        firstName,
-        lastName,
-        jobTitle: admin.employee?.jobTitle ?? "",
-        displayName,
-        permissionRole: admin.id === auth.userId ? "SUPER_ADMIN" : "ADMIN"
-      });
-    }
-
-    // Ensure the enabling admin is always present as SUPER_ADMIN
-    if (!staffByUserId.has(auth.userId)) {
-      const user = await prisma.user.findUniqueOrThrow({
-        where: { id: auth.userId },
-        include: { employee: true }
-      });
-      const firstName = user.employee?.firstName ?? user.email.split("@")[0] ?? "Admin";
-      const lastName = user.employee?.lastName ?? "";
-      const base = [firstName, lastName].filter(Boolean).join(" ").trim() || user.email;
-      const displayName = await uniqueDisplayName(usedNames, base, user.email);
-      staffByUserId.set(auth.userId, {
-        userId: auth.userId,
-        employeeId: user.employee?.id ?? null,
-        firstName,
-        lastName,
-        jobTitle: user.employee?.jobTitle ?? "",
-        displayName,
-        permissionRole: "SUPER_ADMIN"
-      });
-    } else {
-      staffByUserId.get(auth.userId)!.permissionRole = "SUPER_ADMIN";
-    }
-
-    const workspace = await prisma.$transaction(async (tx) => {
-      const created = await tx.ttWorkspace.create({
-        data: {
-          organizationId,
-          name: "Task Operations"
-        }
-      });
-
-      const permissionRows = seedPermissionRows(created.id);
-      if (permissionRows.length) {
-        await tx.ttPermissionRule.createMany({ data: permissionRows });
-      }
-
-      let sortOrder = 0;
-      for (const member of staffByUserId.values()) {
-        await tx.ttStaffMember.create({
-          data: {
-            workspaceId: created.id,
-            userId: member.userId,
-            employeeId: member.employeeId,
-            displayName: member.displayName,
-            firstName: member.firstName,
-            lastName: member.lastName,
-            jobTitle: member.jobTitle,
-            permissionRole: member.permissionRole,
-            sortOrder
-          }
-        });
-        sortOrder += 1;
-      }
-
-      return created;
+    const synced = await syncWorkforceStaffToWorkspace({
+      workspaceId: workspace.id,
+      organizationId,
+      forceSuperAdminUserId: auth.userId
     });
 
     const membership = await ensureMembership({
@@ -433,13 +229,16 @@ export const enablementService = {
       enabler: true
     });
 
+    const staffCount = await prisma.ttStaffMember.count({ where: { workspaceId: workspace.id } });
+
     return {
       enabled: true as const,
       workspaceId: workspace.id,
       name: workspace.name,
       enabledAt: workspace.enabledAt.toISOString(),
       revision: workspace.revision,
-      staffCount: staffByUserId.size,
+      staffCount,
+      synced,
       membership
     };
   }

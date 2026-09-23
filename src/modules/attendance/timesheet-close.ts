@@ -60,6 +60,7 @@ export async function closeOpenTimesheet(input: {
   }
 
   const result = await prisma.$transaction(async (tx) => {
+    // updateMany cannot nest relation creates — scalars only, then create children.
     const changed = await tx.timesheet.updateMany({
       where: { id: open.id, isOpen: true },
       data: {
@@ -72,23 +73,31 @@ export async function closeOpenTimesheet(input: {
         isOpen: false,
         status,
         checkOutSource: source,
-        checkOutIdempotencyKey: idempotencyKey,
-        ...(input.checkoutLocation ? { locations: { create: input.checkoutLocation } } : {}),
-        ...(createWorksheet
-          ? {
-              worksheet: {
-                create: {
-                  employeeId: open.employeeId,
-                  workDate: open.workDate,
-                  workDescription: workDescription!,
-                  submittedAt: checkoutAt
-                }
-              }
-            }
-          : {})
+        checkOutIdempotencyKey: idempotencyKey
       }
     });
     if (!changed.count) throw new AppError(409, "TIMESHEET_ALREADY_CLOSED", "Timesheet is already closed");
+
+    if (input.checkoutLocation) {
+      await tx.attendanceLocation.create({
+        data: {
+          timesheetId: open.id,
+          ...input.checkoutLocation
+        }
+      });
+    }
+
+    if (createWorksheet) {
+      await tx.worksheet.create({
+        data: {
+          timesheetId: open.id,
+          employeeId: open.employeeId,
+          workDate: open.workDate,
+          workDescription: workDescription!,
+          submittedAt: checkoutAt
+        }
+      });
+    }
 
     const timesheet = await tx.timesheet.findUniqueOrThrow({
       where: { id: open.id },

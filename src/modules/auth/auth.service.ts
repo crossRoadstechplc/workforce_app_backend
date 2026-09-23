@@ -81,7 +81,12 @@ async function verifyCredentials(input: { login: string; password: string; organ
   const byEmail = await prisma.user.findFirst({ where: { email }, select: { id: true, status: true, passwordHash: true } });
   if (byEmail) {
     userId = byEmail.id;
-    if (byEmail.status !== "ACTIVE" || !(await argon2.verify(byEmail.passwordHash, password))) {
+    const passwordOk = await argon2.verify(byEmail.passwordHash, password);
+    if (byEmail.status !== "ACTIVE" || !passwordOk) {
+      console.log("[auth] login rejected", {
+        login: email,
+        reason: byEmail.status !== "ACTIVE" ? "USER_INACTIVE" : "BAD_PASSWORD"
+      });
       throw new AppError(401, "INVALID_CREDENTIALS", "Invalid login or password");
     }
   } else {
@@ -92,19 +97,28 @@ async function verifyCredentials(input: { login: string; password: string; organ
       where: employeeWhere,
       include: { user: { select: { id: true, status: true, passwordHash: true } } }
     });
-    if (!employee) throw new AppError(401, "INVALID_CREDENTIALS", "Invalid login or password");
+    if (!employee) {
+      console.log("[auth] login rejected", { login: normalizedLogin, reason: "USER_NOT_FOUND" });
+      throw new AppError(401, "INVALID_CREDENTIALS", "Invalid login or password");
+    }
     if (!organizationSlug) {
       const collisions = await prisma.employee.count({ where: { employeeCode: code } });
       if (collisions > 1) {
         throw new AppError(400, "ORG_SLUG_REQUIRED", "Multiple organizations use this employee code. Provide organizationSlug.");
       }
     }
-    if (employee.user.status !== "ACTIVE" || !(await argon2.verify(employee.user.passwordHash, password))) {
+    const passwordOk = await argon2.verify(employee.user.passwordHash, password);
+    if (employee.user.status !== "ACTIVE" || !passwordOk) {
+      console.log("[auth] login rejected", {
+        login: normalizedLogin,
+        reason: employee.user.status !== "ACTIVE" ? "USER_INACTIVE" : "BAD_PASSWORD"
+      });
       throw new AppError(401, "INVALID_CREDENTIALS", "Invalid login or password");
     }
     userId = employee.user.id;
   }
 
+  console.log("[auth] credentials ok", { login: email.includes("@") ? email : normalizedLogin, userId });
   return userId;
 }
 

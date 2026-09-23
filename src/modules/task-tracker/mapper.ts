@@ -1,5 +1,6 @@
 import { prisma } from "../../database/prisma.js";
 import { PERMISSION_ROLE_FROM_DB, PERMISSION_ROLE_LABELS, TASK_STATUS_FROM_DB, type TtPermissionRoleDb, type TtTaskStatusDb } from "./roles.js";
+import { syncWorkforceStaffToWorkspace } from "./staff-sync.service.js";
 import { getAccessibleProjectIds, type WorkspaceViewer } from "./visibility.js";
 import type {
   ArchivedTask,
@@ -14,13 +15,24 @@ import type {
 function buildStaffMaps(
   staffMembers: Array<{
     id: string;
+    userId: string;
     displayName: string;
     firstName: string;
     lastName: string;
     jobTitle: string;
     permissionRole: TtPermissionRoleDb | string;
     user?: { email: string; mustChangePassword: boolean } | null;
-  }>
+  }>,
+  enrichmentByUserId: Map<
+    string,
+    {
+      department: string;
+      office: string;
+      workforceRole: StaffProfile["workforceRole"];
+      employeeCode: string;
+      email: string;
+    }
+  >
 ) {
   const staff: string[] = [];
   const staffProfiles: Record<string, StaffProfile> = {};
@@ -30,13 +42,18 @@ function buildStaffMaps(
     staff.push(member.displayName);
     idToDisplayName.set(member.id, member.displayName);
     const invitePending = Boolean(member.user?.mustChangePassword);
+    const enrichment = enrichmentByUserId.get(member.userId);
     staffProfiles[member.displayName] = {
       firstName: member.firstName,
       lastName: member.lastName,
       role: member.jobTitle,
       permissionRole: PERMISSION_ROLE_FROM_DB[member.permissionRole as TtPermissionRoleDb],
-      ...(member.user?.email ? { email: member.user.email } : {}),
-      inviteStatus: invitePending ? "pending" : "active"
+      email: enrichment?.email ?? member.user?.email,
+      inviteStatus: invitePending ? "pending" : "active",
+      department: enrichment?.department ?? "",
+      office: enrichment?.office ?? "",
+      workforceRole: enrichment?.workforceRole ?? "Employee",
+      employeeCode: enrichment?.employeeCode ?? ""
     };
   }
 
@@ -136,7 +153,35 @@ export async function getLegacyWorkspaceData(
   workspaceId: string,
   viewer?: WorkspaceViewer
 ): Promise<WorkspaceData> {
+  const started = Date.now();
+  const workspaceMeta = await prisma.ttWorkspace.findUniqueOrThrow({
+    where: { id: workspaceId },
+    select: { id: true, organizationId: true }
+  });
+
+  // Keep Team Members aligned with Workforce directory (employees + office/org admins).
+  const syncStarted = Date.now();
+  const synced = await syncWorkforceStaffToWorkspace({
+    workspaceId: workspaceMeta.id,
+    organizationId: workspaceMeta.organizationId
+  });
+  console.log("[tt-workspace] staff sync", {
+    workspaceId,
+    created: synced.created,
+    updated: synced.updated,
+    ms: Date.now() - syncStarted
+  });
+
+  const loadStarted = Date.now();
   const workspace = await loadWorkspace(workspaceId);
+  console.log("[tt-workspace] load workspace", {
+    workspaceId,
+    staff: workspace.staffMembers.length,
+    projects: workspace.projects.length,
+    tasks: workspace.tasks.length,
+    ms: Date.now() - loadStarted
+  });
+  const enrichmentByUserId = synced.enrichmentByUserId;
   const accessibleProjectIds = viewer
     ? await getAccessibleProjectIds(workspaceId, viewer.staffMemberId, viewer.permissionRole)
     : null;
@@ -182,7 +227,10 @@ export async function getLegacyWorkspaceData(
           return false;
         });
 
-  const { staff, staffProfiles, idToDisplayName } = buildStaffMaps(workspace.staffMembers);
+  const { staff, staffProfiles, idToDisplayName } = buildStaffMaps(
+    workspace.staffMembers,
+    enrichmentByUserId
+  );
   const staffIds: Record<string, string> = {};
   for (const member of workspace.staffMembers) {
     staffIds[member.displayName] = member.id;
@@ -260,6 +308,12 @@ export async function getLegacyWorkspaceData(
     const roleLabel = PERMISSION_ROLE_FROM_DB[rule.role as TtPermissionRoleDb];
     permissionMatrix[roleLabel][rule.actionId] = rule.allowed;
   }
+
+  console.log("[tt-workspace] getLegacyWorkspaceData done", {
+    workspaceId,
+    staff: staff.length,
+    ms: Date.now() - started
+  });
 
   return {
     tasks,

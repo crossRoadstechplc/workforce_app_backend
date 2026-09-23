@@ -432,10 +432,7 @@ export const removeSchedule: RequestHandler = async (req, res, next) => {
 
 export const inviteStaff: RequestHandler = async (req, res, next) => {
   try {
-    const result = await createStaffFromUser({ actor: actorFromRequest(req), ...req.body });
-    if (result.revision) setRevisionHeaders(res, result.revision);
-    const { revision: _r, ...body } = result;
-    res.json(body);
+    await createStaffFromUser({ actor: actorFromRequest(req), ...req.body });
   } catch (e) {
     next(e);
   }
@@ -443,13 +440,11 @@ export const inviteStaff: RequestHandler = async (req, res, next) => {
 
 export const patchStaff: RequestHandler = async (req, res, next) => {
   try {
-    const result = await updateStaffMember({
+    await updateStaffMember({
       actor: actorFromRequest(req),
       staffId: paramId(req.params.id!),
       ...req.body
     });
-    setRevisionHeaders(res, result.revision);
-    res.json(result);
   } catch (e) {
     next(e);
   }
@@ -457,12 +452,10 @@ export const patchStaff: RequestHandler = async (req, res, next) => {
 
 export const removeStaff: RequestHandler = async (req, res, next) => {
   try {
-    const result = await deleteStaffMember({
+    await deleteStaffMember({
       actor: actorFromRequest(req),
       staffId: paramId(req.params.id!)
     });
-    setRevisionHeaders(res, result.revision);
-    res.json({ ok: true, revision: result.revision });
   } catch (e) {
     next(e);
   }

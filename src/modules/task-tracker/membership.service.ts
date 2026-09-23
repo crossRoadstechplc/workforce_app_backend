@@ -3,10 +3,9 @@ import { AppError } from "../../shared/errors/app-error.js";
 import type { AuthContext } from "../../shared/tenancy.js";
 import { requireWorkspaceByOrganizationId } from "./context.js";
 import { defaultPermissionRoleForAuth } from "./role-defaults.js";
-import { PERMISSION_ROLE_FROM_DB, type TtPermissionRoleDb } from "./roles.js";
+import type { TtPermissionRoleDb } from "./roles.js";
+import { PERMISSION_ROLE_FROM_DB } from "./roles.js";
 import type { TrackerContext } from "./types.js";
-
-export { defaultPermissionRoleForAuth } from "./role-defaults.js";
 
 function buildDisplayName(firstName: string, lastName: string, fallback: string) {
   return [firstName, lastName].filter(Boolean).join(" ").trim() || fallback;
@@ -23,6 +22,11 @@ async function uniqueDisplayName(workspaceId: string, base: string, userId: stri
   return `${base} (${suffix})`;
 }
 
+/**
+ * Ensure the current user has a TtStaffMember row.
+ * New members get a default tracker role from Workforce admin context (org admin → Super Admin).
+ * Existing permissionRole is never changed here.
+ */
 export async function ensureMembership(input: {
   workspaceId: string;
   auth: AuthContext;
@@ -34,6 +38,18 @@ export async function ensureMembership(input: {
     }
   });
   if (existing) {
+    if (input.enabler && existing.permissionRole !== "SUPER_ADMIN") {
+      const upgraded = await prisma.ttStaffMember.update({
+        where: { id: existing.id },
+        data: { permissionRole: "SUPER_ADMIN" }
+      });
+      return {
+        workspaceId: input.workspaceId,
+        staffMemberId: upgraded.id,
+        permissionRole: PERMISSION_ROLE_FROM_DB[upgraded.permissionRole as TtPermissionRoleDb],
+        displayName: upgraded.displayName
+      };
+    }
     return {
       workspaceId: input.workspaceId,
       staffMemberId: existing.id,

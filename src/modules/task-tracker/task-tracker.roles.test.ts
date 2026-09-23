@@ -17,8 +17,8 @@ function auth(partial: Partial<AuthContext>): AuthContext {
 }
 
 describe("task-tracker roles", () => {
-  it("maps workforce roles to tracker defaults", () => {
-    expect(defaultPermissionRoleForAuth(auth({ roles: [ROLE.ORG_ADMIN] }))).toBe("ADMIN");
+  it("defaults Workforce org admins to Super Admin for new tracker staff", () => {
+    expect(defaultPermissionRoleForAuth(auth({ roles: [ROLE.ORG_ADMIN] }))).toBe("SUPER_ADMIN");
     expect(defaultPermissionRoleForAuth(auth({ roles: [ROLE.OFFICE_ADMIN] }))).toBe("LEAD");
     expect(defaultPermissionRoleForAuth(auth({ roles: [ROLE.EMPLOYEE] }))).toBe("JUNIOR_STAFF");
     expect(defaultPermissionRoleForAuth(auth({ roles: [ROLE.ORG_ADMIN] }), { enabler: true })).toBe(
