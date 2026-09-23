@@ -21,6 +21,7 @@
     "db:wipe-keep-admin": "tsx prisma/wipe-keep-admin.ts",
     "job:missing-checkouts": "tsx src/jobs/missing-checkouts.ts",
     "job:attendance-reminders": "tsx src/jobs/attendance-reminders.ts",
+    "job:auto-checkouts": "tsx src/jobs/auto-checkouts.ts",
     "job:backfill-annual-leave": "tsx scripts/backfill-annual-leave.ts",
     "prod:setup": "npm run db:deploy && npm run build && npm run db:seed:admin:prod",
     "pm2:start": "pm2 start ecosystem.config.cjs",

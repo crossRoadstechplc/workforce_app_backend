@@ -62,6 +62,7 @@ export const historyService = {
           isLate: true,
           isEarlyCheckout: true,
           isMissingCheckout: true,
+          checkOutSource: true,
           worksheet: { select: { id: true } }
         }
       }),
@@ -113,8 +114,8 @@ export const historyService = {
       include: { worksheet: true }
     });
     if (!timesheet) throw new AppError(404, "TIMESHEET_NOT_FOUND", "Timesheet not found");
-    if (timesheet.isOpen) {
-      throw new AppError(409, "TIMESHEET_STILL_OPEN", "Worksheet can only be added after checkout");
+    if (!timesheet.actualCheckIn) {
+      throw new AppError(409, "CHECKIN_REQUIRED", "Worksheet can only be added after check-in");
     }
     if (timesheet.worksheet) {
       throw new AppError(409, "WORKSHEET_EXISTS", "A worksheet already exists for this timesheet");
@@ -217,6 +218,7 @@ export const historyService = {
           isEarlyCheckout: early > 0,
           isOpen: false,
           isMissingCheckout: false,
+          checkOutSource: "ADMIN",
           status
         }
       });

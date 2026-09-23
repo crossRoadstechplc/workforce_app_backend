@@ -6,6 +6,7 @@ import { deliverNotification } from "../notifications/notification.service.js";
 import { emitToOfficeDisplay, emitToOrgAdmins, emitToOrgRole, emitToUser } from "../../realtime/socket.server.js";
 import { ROLE } from "../../shared/tenancy.js";
 import { formatWorkDateKey, todayWorkDate, todayWorkDateKey, workDateFromKey } from "../../shared/work-date.js";
+import { closeOpenTimesheet } from "./timesheet-close.js";
 
 type ClientChannel = "MOBILE" | "DESKTOP";
 type GpsFix = { latitude: number; longitude: number; accuracyMeters: number; capturedAt: Date };
@@ -212,55 +213,6 @@ function formatTimesheetResponse<T extends { workDate: Date; isOpen: boolean; ti
   };
 }
 
-function computeCheckoutMetrics(
-  open: {
-    actualCheckIn: Date;
-    scheduledCheckOut: Date;
-    workDate: Date;
-    timezone: string;
-  },
-  now: Date
-) {
-  const rawWorkedMinutes = Math.max(0, Math.floor((now.getTime() - open.actualCheckIn.getTime()) / 60000));
-  const scheduledWorkedMinutes = Math.max(
-    0,
-    Math.floor((open.scheduledCheckOut.getTime() - open.actualCheckIn.getTime()) / 60000)
-  );
-  const workDateKey = formatWorkDateKey(open.workDate);
-  const checkoutDateKey = DateTime.fromJSDate(now, { zone: open.timezone }).toISODate()!;
-  const isCrossDayCheckout = checkoutDateKey > workDateKey;
-  const checkoutAfterScheduled = now.getTime() > open.scheduledCheckOut.getTime();
-
-  if (isCrossDayCheckout) {
-    return {
-      workedMinutes: scheduledWorkedMinutes,
-      earlyCheckoutMinutes: 0,
-      overtimeMinutes: 0,
-      isEarlyCheckout: false,
-      isMissingCheckout: true
-    };
-  }
-
-  if (checkoutAfterScheduled) {
-    return {
-      workedMinutes: rawWorkedMinutes,
-      earlyCheckoutMinutes: 0,
-      overtimeMinutes: Math.max(0, Math.floor((now.getTime() - open.scheduledCheckOut.getTime()) / 60000)),
-      isEarlyCheckout: false,
-      isMissingCheckout: false
-    };
-  }
-
-  const earlyCheckoutMinutes = Math.max(0, Math.floor((open.scheduledCheckOut.getTime() - now.getTime()) / 60000));
-  return {
-    workedMinutes: rawWorkedMinutes,
-    earlyCheckoutMinutes,
-    overtimeMinutes: 0,
-    isEarlyCheckout: earlyCheckoutMinutes > 0,
-    isMissingCheckout: false
-  };
-}
-
 export const attendanceService = {
   formatTimesheetResponse,
   async current(userId: string) {
@@ -398,58 +350,32 @@ export const attendanceService = {
     const presence = await resolvePresence(input, { latitude: open.officeLatitude, longitude: open.officeLongitude, allowedRadiusMeters: open.officeAllowedRadiusMeters, maximumAccuracyMeters: open.officeMaximumAccuracyMeters }, employee.organizationId, now);
     if (!presence.geo.insideRadius) throw new AppError(422, "OUTSIDE_OFFICE_RADIUS", "Checkout is outside the allowed office radius");
     await attendancePhotoService.validatePhotoUrl(employee.organizationId, input.photoUrl);
-    const metrics = computeCheckoutMetrics(open, now);
-    const completedStatus = open.isLate ? "COMPLETED_LATE" : "COMPLETED_ON_TIME";
-    const closedCarriedOverShift = formatWorkDateKey(open.workDate) < todayWorkDateKey(open.timezone);
-
-    const workDescription = input.workDescription?.trim();
-    const createWorksheet = Boolean(workDescription);
-
-    const result = await prisma.$transaction(async (tx) => {
-      const current = await tx.timesheet.findUnique({ where: { id: open.id } });
-      if (!current?.isOpen) throw new AppError(409, "TIMESHEET_ALREADY_CLOSED", "Timesheet is already closed");
-      const timesheet = await tx.timesheet.update({
-        where: { id: open.id }, data: {
-          actualCheckOut: now,
-          workedMinutes: metrics.workedMinutes,
-          earlyCheckoutMinutes: metrics.earlyCheckoutMinutes,
-          overtimeMinutes: metrics.overtimeMinutes,
-          isEarlyCheckout: metrics.isEarlyCheckout,
-          isMissingCheckout: open.isMissingCheckout || metrics.isMissingCheckout,
-          isOpen: false,
-          status: metrics.isMissingCheckout || open.isMissingCheckout ? "MISSING_CHECKOUT" : completedStatus,
-          checkOutIdempotencyKey: input.idempotencyKey,
-          locations: { create: locationCreate(presence, "CHECK_OUT", open.officeAllowedRadiusMeters, now, input.photoUrl) },
-          ...(createWorksheet
-            ? { worksheet: { create: { employeeId: employee.id, workDate: open.workDate, workDescription: workDescription!, submittedAt: now } } }
-            : {})
-        }, include: { worksheet: true, lateReason: true, locations: true }
-      });
-      const notification = await tx.notification.create({
-        data: {
-          userId,
-          type: "CHECK_OUT_SUCCESS",
-          title: closedCarriedOverShift ? "Previous shift closed" : "Checkout successful",
-          message: closedCarriedOverShift
-            ? `Your open shift from ${formatWorkDateKey(open.workDate)} is closed. Worked time: ${metrics.workedMinutes} minutes. You can check in for today.`
-            : `You checked out successfully. Worked time: ${metrics.workedMinutes} minutes.`,
-          relatedEntityType: "Timesheet",
-          relatedEntityId: timesheet.id
-        }
-      });
-      return { timesheet, notification };
+    const timesheet = await closeOpenTimesheet({
+      open,
+      checkoutAt: now,
+      source: "EMPLOYEE",
+      userId,
+      organizationId: employee.organizationId,
+      officeId: employee.officeId,
+      idempotencyKey: input.idempotencyKey,
+      checkoutLocation: {
+        ...locationCreate(presence, "CHECK_OUT", open.officeAllowedRadiusMeters, now, input.photoUrl),
+        type: "CHECK_OUT" as const
+      },
+      workDescription: input.workDescription
     });
-    await deliverNotification(result.notification);
-    emitToUser(userId, "attendance.checked_out", { timesheetId: result.timesheet.id, workedMinutes: metrics.workedMinutes, closedCarriedOverShift });
-    emitToOrgAdmins(employee.organizationId, "employee.checked_out", { employeeId: employee.id, timesheetId: result.timesheet.id, workedMinutes: metrics.workedMinutes });
-    emitToOfficeDisplay(employee.organizationId, employee.officeId, "display.people_changed", { employeeId: employee.id });
-    return formatTimesheetResponse(result.timesheet)!;
+    return formatTimesheetResponse(timesheet)!;
   },
 
   async adminConfig(organizationId: string) {
     const org = await prisma.organization.findUnique({
       where: { id: organizationId },
-      select: { attendancePhotoRequired: true, attendanceDesktopSkipLocation: true }
+      select: {
+        attendancePhotoRequired: true,
+        attendanceDesktopSkipLocation: true,
+        attendanceAutoCheckoutEnabled: true,
+        attendanceAutoCheckoutTime: true
+      }
     });
     if (!org) throw new AppError(404, "ORG_NOT_FOUND", "Organization not found");
     const photoRequired = await attendancePhotoService.isRequiredForOrganization(organizationId);
@@ -457,30 +383,51 @@ export const attendanceService = {
       photoRequiredEnabled: org.attendancePhotoRequired,
       photoRequired,
       photosAvailable: attendancePhotoService.isGloballyEnabled(),
-      desktopSkipLocationEnabled: org.attendanceDesktopSkipLocation
+      desktopSkipLocationEnabled: org.attendanceDesktopSkipLocation,
+      autoCheckoutEnabled: org.attendanceAutoCheckoutEnabled,
+      autoCheckoutTime: org.attendanceAutoCheckoutTime
     };
   },
 
-  async updateAdminConfig(organizationId: string, input: { photoRequiredEnabled?: boolean; desktopSkipLocationEnabled?: boolean }) {
+  async updateAdminConfig(
+    organizationId: string,
+    input: {
+      photoRequiredEnabled?: boolean;
+      desktopSkipLocationEnabled?: boolean;
+      autoCheckoutEnabled?: boolean;
+      autoCheckoutTime?: string;
+    }
+  ) {
     const org = await prisma.organization.update({
       where: { id: organizationId },
       data: {
         ...(input.photoRequiredEnabled !== undefined ? { attendancePhotoRequired: input.photoRequiredEnabled } : {}),
-        ...(input.desktopSkipLocationEnabled !== undefined ? { attendanceDesktopSkipLocation: input.desktopSkipLocationEnabled } : {})
+        ...(input.desktopSkipLocationEnabled !== undefined ? { attendanceDesktopSkipLocation: input.desktopSkipLocationEnabled } : {}),
+        ...(input.autoCheckoutEnabled !== undefined ? { attendanceAutoCheckoutEnabled: input.autoCheckoutEnabled } : {}),
+        ...(input.autoCheckoutTime !== undefined ? { attendanceAutoCheckoutTime: input.autoCheckoutTime } : {})
       },
-      select: { attendancePhotoRequired: true, attendanceDesktopSkipLocation: true }
+      select: {
+        attendancePhotoRequired: true,
+        attendanceDesktopSkipLocation: true,
+        attendanceAutoCheckoutEnabled: true,
+        attendanceAutoCheckoutTime: true
+      }
     });
     const photoRequired = await attendancePhotoService.isRequiredForOrganization(organizationId);
     emitToOrgRole(organizationId, ROLE.EMPLOYEE, "attendance.config_changed", {
       photoRequired,
       photoRequiredEnabled: org.attendancePhotoRequired,
-      desktopSkipLocationEnabled: org.attendanceDesktopSkipLocation
+      desktopSkipLocationEnabled: org.attendanceDesktopSkipLocation,
+      autoCheckoutEnabled: org.attendanceAutoCheckoutEnabled,
+      autoCheckoutTime: org.attendanceAutoCheckoutTime
     });
     return {
       photoRequiredEnabled: org.attendancePhotoRequired,
       photoRequired,
       photosAvailable: attendancePhotoService.isGloballyEnabled(),
-      desktopSkipLocationEnabled: org.attendanceDesktopSkipLocation
+      desktopSkipLocationEnabled: org.attendanceDesktopSkipLocation,
+      autoCheckoutEnabled: org.attendanceAutoCheckoutEnabled,
+      autoCheckoutTime: org.attendanceAutoCheckoutTime
     };
   }
 };

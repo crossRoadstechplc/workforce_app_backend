@@ -58,6 +58,20 @@ module.exports = {
       merge_logs: true,
       out_file: "logs/attendance-reminders-out.log",
       error_file: "logs/attendance-reminders-error.log"
+    },
+    {
+      name: "workforce-auto-checkouts",
+      script: "dist/src/jobs/auto-checkouts.js",
+      cwd: __dirname,
+      exec_mode: "fork",
+      instances: 1,
+      env: { NODE_ENV: "production" },
+      autorestart: false,
+      cron_restart: "*/5 * * * *",
+      time: true,
+      merge_logs: true,
+      out_file: "logs/auto-checkouts-out.log",
+      error_file: "logs/auto-checkouts-error.log"
     }
   ]
 };

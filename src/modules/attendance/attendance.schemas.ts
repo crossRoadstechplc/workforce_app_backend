@@ -57,11 +57,20 @@ export const checkOutSchema = z.object({ body: z.object({
   workDescription: z.string().trim().max(5000).optional(),
   photoUrl: photoUrl
 }) });
+const autoCheckoutTime = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Time must be HH:mm (24-hour)");
+
 export const attendanceConfigUpdateSchema = z.object({
   body: z.object({
     photoRequiredEnabled: z.boolean().optional(),
-    desktopSkipLocationEnabled: z.boolean().optional()
-  }).refine((value) => value.photoRequiredEnabled !== undefined || value.desktopSkipLocationEnabled !== undefined, {
-    message: "At least one attendance setting is required"
-  })
+    desktopSkipLocationEnabled: z.boolean().optional(),
+    autoCheckoutEnabled: z.boolean().optional(),
+    autoCheckoutTime: autoCheckoutTime.optional()
+  }).refine(
+    (value) =>
+      value.photoRequiredEnabled !== undefined ||
+      value.desktopSkipLocationEnabled !== undefined ||
+      value.autoCheckoutEnabled !== undefined ||
+      value.autoCheckoutTime !== undefined,
+    { message: "At least one attendance setting is required" }
+  )
 });

@@ -177,6 +177,7 @@ export const rosterService = {
               isOpen: timesheet.isOpen,
               isLate: timesheet.isLate,
               isMissingCheckout: timesheet.isMissingCheckout,
+              checkOutSource: timesheet.checkOutSource,
               lateReason: timesheet.lateReason,
               checkInPhotoUrl: timesheet.locations.find((l) => l.type === "CHECK_IN")?.photoUrl ?? null,
               checkOutPhotoUrl: timesheet.locations.find((l) => l.type === "CHECK_OUT")?.photoUrl ?? null
@@ -266,6 +267,7 @@ export const rosterService = {
           isOpen: true,
           isMissingCheckout: true,
           actualCheckOut: true,
+          checkOutSource: true,
           status: true
         }
       }),
@@ -296,6 +298,8 @@ export const rosterService = {
     const items = employees.map((e) => {
       let missingCheckInDays = 0;
       let missingCheckOutDays = 0;
+      let employeeCheckoutDays = 0;
+      let systemCheckoutDays = 0;
       let lateDays = 0;
       let leaveDays = 0;
       let presentDays = 0;
@@ -344,6 +348,10 @@ export const rosterService = {
         if (timesheet.isMissingCheckout || (timesheet.isOpen && !timesheet.actualCheckOut)) {
           missingCheckOutDays += 1;
         }
+        if (timesheet.actualCheckOut && !timesheet.isOpen) {
+          if (timesheet.checkOutSource === "SYSTEM") systemCheckoutDays += 1;
+          else if (timesheet.checkOutSource === "EMPLOYEE") employeeCheckoutDays += 1;
+        }
       }
 
       return {
@@ -354,7 +362,9 @@ export const rosterService = {
         leaveDays: Math.round(leaveDays * 100) / 100,
         lateDays,
         missingCheckInDays,
-        missingCheckOutDays
+        missingCheckOutDays,
+        employeeCheckoutDays,
+        systemCheckoutDays
       };
     });
 
@@ -363,7 +373,9 @@ export const rosterService = {
       employeesMissingCheckIn: items.filter((i) => i.missingCheckInDays > 0).length,
       employeesMissingCheckOut: items.filter((i) => i.missingCheckOutDays > 0).length,
       totalMissingCheckInDays: items.reduce((sum, i) => sum + i.missingCheckInDays, 0),
-      totalMissingCheckOutDays: items.reduce((sum, i) => sum + i.missingCheckOutDays, 0)
+      totalMissingCheckOutDays: items.reduce((sum, i) => sum + i.missingCheckOutDays, 0),
+      totalEmployeeCheckouts: items.reduce((sum, i) => sum + i.employeeCheckoutDays, 0),
+      totalSystemCheckouts: items.reduce((sum, i) => sum + i.systemCheckoutDays, 0)
     };
 
     return {

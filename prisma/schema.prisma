@@ -47,6 +47,13 @@ enum AttendanceLocationType {
 enum AttendanceLocationSource {
   GPS
   DESKTOP
+  SYSTEM
+}
+
+enum CheckOutSource {
+  EMPLOYEE
+  SYSTEM
+  ADMIN
 }
 
 enum WorksheetStatus {
@@ -97,6 +104,7 @@ enum NotificationType {
   CHECK_IN_LATE
   CHECK_IN_REMINDER
   CHECK_OUT_SUCCESS
+  CHECK_OUT_AUTO
   CHECKOUT_REMINDER
   MISSING_CHECKOUT
   LEAVE_SUBMITTED
@@ -226,6 +234,8 @@ model Organization {
   isActive                Boolean                    @default(true) @map("is_active")
   attendancePhotoRequired         Boolean                    @default(true) @map("attendance_photo_required")
   attendanceDesktopSkipLocation   Boolean                    @default(true) @map("attendance_desktop_skip_location")
+  attendanceAutoCheckoutEnabled   Boolean                    @default(true) @map("attendance_auto_checkout_enabled")
+  attendanceAutoCheckoutTime      String                     @default("22:00") @map("attendance_auto_checkout_time")
   createdAt               DateTime                   @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt               DateTime                   @updatedAt @map("updated_at") @db.Timestamptz(6)
   memberships OrganizationMembership[]
@@ -571,6 +581,7 @@ model Timesheet {
   isLate                      Boolean                 @default(false) @map("is_late")
   isEarlyCheckout             Boolean                 @default(false) @map("is_early_checkout")
   isMissingCheckout           Boolean                 @default(false) @map("is_missing_checkout")
+  checkOutSource              CheckOutSource?         @map("check_out_source")
   checkInIdempotencyKey       String                  @unique @map("check_in_idempotency_key")
   checkOutIdempotencyKey      String?                 @unique @map("check_out_idempotency_key")
   scheduleCheckInTime         String                  @map("schedule_check_in_time")

@@ -78,7 +78,15 @@ export const timesheetReport: RequestHandler = async (req, res, next) => {
       workedMinutes: x.workedMinutes,
       lateMinutes: x.lateMinutes,
       earlyCheckoutMinutes: x.earlyCheckoutMinutes,
-      overtimeMinutes: x.overtimeMinutes
+      overtimeMinutes: x.overtimeMinutes,
+      checkOutBy:
+        x.checkOutSource === "SYSTEM"
+          ? "System"
+          : x.checkOutSource === "EMPLOYEE"
+            ? "Employee"
+            : x.checkOutSource === "ADMIN"
+              ? "Administrator"
+              : ""
     }));
     sendCsv(res, "timesheets.csv", rows, [
       { key: "date", header: "Date" },
@@ -89,6 +97,7 @@ export const timesheetReport: RequestHandler = async (req, res, next) => {
       { key: "status", header: "Status" },
       { key: "checkIn", header: "Check In" },
       { key: "checkOut", header: "Check Out" },
+      { key: "checkOutBy", header: "Checkout By" },
       { key: "workedMinutes", header: "Worked Minutes" },
       { key: "lateMinutes", header: "Late Minutes" },
       { key: "earlyCheckoutMinutes", header: "Early Checkout Minutes" },
