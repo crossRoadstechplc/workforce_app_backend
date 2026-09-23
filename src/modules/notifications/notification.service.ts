@@ -9,6 +9,7 @@ export async function deliverNotification(notification: { id: string; userId: st
   await sendPushToUser(notification.userId, notification.title, notification.message, {
     notificationId: notification.id,
     type: notification.type,
+    ...(notification.relatedEntityType ? { relatedEntityType: notification.relatedEntityType } : {}),
     ...(notification.relatedEntityId ? { relatedEntityId: notification.relatedEntityId } : {})
   }).catch(() => undefined);
 }

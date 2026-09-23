@@ -395,6 +395,7 @@ export const attendanceCorrectnessService = {
     });
     await deliverNotification(n);
     emitToUser(request.employee.userId, "attendance.correctness_decided", { requestId: id, status: "APPROVED" });
+    emitToOrgAdmins(organizationId, "attendance.correctness_decided", { requestId: id, status: "APPROVED" });
     emitToOrgAdmins(organizationId, "attendance.corrected", { timesheetId: timesheetResult.updated.id, employeeId: request.employeeId });
 
     return serializeRequest(updated);
@@ -436,6 +437,7 @@ export const attendanceCorrectnessService = {
       });
       await deliverNotification(n);
       emitToUser(employee.userId, "attendance.correctness_decided", { requestId: id, status: "REJECTED" });
+      emitToOrgAdmins(request.organizationId, "attendance.correctness_decided", { requestId: id, status: "REJECTED" });
     }
 
     return serializeRequest(updated);

@@ -258,6 +258,13 @@ export const attendanceService = {
       };
     }
     const office = employee.office;
+    let scheduledWorkMinutes = 0;
+    try {
+      const clock = attendanceClock(employee as Awaited<ReturnType<typeof employeeContext>>, new Date());
+      scheduledWorkMinutes = Math.max(0, Math.floor(clock.scheduledOut.diff(clock.scheduledIn, "minutes").minutes));
+    } catch {
+      scheduledWorkMinutes = 0;
+    }
     return {
       assigned: true as const,
       id: office.id,
@@ -269,7 +276,8 @@ export const attendanceService = {
       maximumAccuracyMeters: office.maximumAccuracyMeters,
       timezone: office.timezone || employee.schedule!.timezone,
       photoRequired,
-      desktopSkipLocationEnabled
+      desktopSkipLocationEnabled,
+      scheduledWorkMinutes
     };
   },
 
