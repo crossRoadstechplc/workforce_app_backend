@@ -1,6 +1,8 @@
 import { prisma } from "../../database/prisma.js";
 import { AppError } from "../../shared/errors/app-error.js";
 import { pageMeta } from "../../shared/pagination.js";
+import { employeeOfficeFilter, getOfficeScope, type OfficeScope } from "../../shared/office-scope.js";
+import { isTenantAdmin, requireOrganizationId, type AuthContext } from "../../shared/tenancy.js";
 import { deliverNotification } from "../notifications/notification.service.js";
 import { emitToUser } from "../../realtime/socket.server.js";
 
@@ -20,6 +22,7 @@ const participantInclude = {
   user: {
     select: {
       id: true,
+      email: true,
       employee: { select: employeeCardSelect }
     }
   }
@@ -29,6 +32,7 @@ const messageInclude = {
   sender: {
     select: {
       id: true,
+      email: true,
       employee: { select: { firstName: true, middleName: true, lastName: true } }
     }
   }
@@ -46,9 +50,27 @@ type EmployeeCard = {
   office: { id: string; name: string } | null;
 };
 
-function displayName(person: { firstName: string; middleName?: string | null; lastName: string } | null | undefined) {
-  if (!person) return "Employee";
+type ChatActor = {
+  userId: string;
+  organizationId: string;
+  displayName: string;
+  isEmployee: boolean;
+  isAdmin: boolean;
+  officeScope: OfficeScope;
+};
+
+function personName(person: { firstName: string; middleName?: string | null; lastName: string } | null | undefined) {
+  if (!person) return null;
   return [person.firstName, person.middleName, person.lastName].filter(Boolean).join(" ");
+}
+
+function adminLabel(email: string) {
+  const local = email.split("@")[0]?.trim();
+  return local ? `Admin (${local})` : "Admin";
+}
+
+function participantLabel(user: { email: string; employee: EmployeeCard | null }) {
+  return personName(user.employee) ?? adminLabel(user.email);
 }
 
 function serializeEmployee(employee: EmployeeCard) {
@@ -57,7 +79,7 @@ function serializeEmployee(employee: EmployeeCard) {
     employeeId: employee.id,
     firstName: employee.firstName,
     lastName: employee.lastName,
-    displayName: displayName(employee),
+    displayName: personName(employee)!,
     jobTitle: employee.jobTitle,
     department: employee.department?.name ?? null,
     employeeCode: employee.employeeCode,
@@ -73,13 +95,13 @@ function serializeMessage(row: {
   body: string | null;
   attachmentUrl: string | null;
   createdAt: Date;
-  sender: { id: string; employee: { firstName: string; middleName: string | null; lastName: string } | null };
+  sender: { id: string; email: string; employee: { firstName: string; middleName: string | null; lastName: string } | null };
 }) {
   return {
     id: row.id,
     conversationId: row.conversationId,
     senderId: row.senderId,
-    senderName: displayName(row.sender.employee),
+    senderName: personName(row.sender.employee) ?? adminLabel(row.sender.email),
     type: row.type,
     body: row.body,
     attachmentUrl: row.attachmentUrl,
@@ -87,28 +109,67 @@ function serializeMessage(row: {
   };
 }
 
-async function chatActor(userId: string) {
-  const employee = await prisma.employee.findUnique({
-    where: { userId },
+async function resolveActor(auth: AuthContext): Promise<ChatActor> {
+  const organizationId = requireOrganizationId(auth);
+  const user = await prisma.user.findUnique({
+    where: { id: auth.userId },
     include: {
-      user: { select: { id: true, status: true } },
-      office: { select: { id: true, name: true } }
+      employee: {
+        select: {
+          id: true,
+          status: true,
+          organizationId: true,
+          firstName: true,
+          middleName: true,
+          lastName: true
+        }
+      }
     }
   });
-  if (!employee || employee.status !== "ACTIVE" || employee.user.status !== "ACTIVE") {
-    throw new AppError(403, "EMPLOYEE_INACTIVE", "Active employee account required");
+  if (!user || user.status !== "ACTIVE") {
+    throw new AppError(403, "USER_INACTIVE", "Active account required");
   }
-  return employee;
+  const employee =
+    user.employee &&
+    user.employee.status === "ACTIVE" &&
+    user.employee.organizationId === organizationId
+      ? user.employee
+      : null;
+  const isAdmin = isTenantAdmin(auth);
+  if (!employee && !isAdmin) {
+    throw new AppError(403, "CHAT_FORBIDDEN", "Active employee or administrator account required");
+  }
+  return {
+    userId: auth.userId,
+    organizationId,
+    displayName: personName(employee) ?? adminLabel(user.email),
+    isEmployee: !!employee,
+    isAdmin,
+    officeScope: getOfficeScope(auth)
+  };
 }
 
-async function requirePeer(organizationId: string, actorUserId: string, peerUserId: string) {
+function requireEmployeeActor(actor: ChatActor) {
+  if (!actor.isEmployee) {
+    throw new AppError(403, "EMPLOYEE_REQUIRED", "Only employees can start personal or group chats");
+  }
+}
+
+function requireAdminActor(actor: ChatActor) {
+  if (!actor.isAdmin) {
+    throw new AppError(403, "ADMIN_REQUIRED", "Administrator access is required");
+  }
+}
+
+async function requirePeer(organizationId: string, actorUserId: string, peerUserId: string, officeScope?: OfficeScope) {
   if (peerUserId === actorUserId) throw new AppError(422, "CANNOT_CHAT_SELF", "You cannot start a chat with yourself");
   const peer = await prisma.employee.findFirst({
     where: {
       userId: peerUserId,
       organizationId,
       status: "ACTIVE",
-      user: { status: "ACTIVE" }
+      user: { status: "ACTIVE" },
+      ...(officeScope ? employeeOfficeFilter(officeScope) : {})
     },
     select: employeeCardSelect
   });
@@ -118,6 +179,10 @@ async function requirePeer(organizationId: string, actorUserId: string, peerUser
 
 function directKeyFor(userIdA: string, userIdB: string) {
   return [userIdA, userIdB].sort().join(":");
+}
+
+function adminKeyFor(userIdA: string, userIdB: string) {
+  return `ADMIN:${directKeyFor(userIdA, userIdB)}`;
 }
 
 async function requireMembership(conversationId: string, userId: string) {
@@ -157,7 +222,7 @@ function serializeConversation(
       userId: string;
       role: string;
       lastReadAt: Date | null;
-      user: { id: string; employee: EmployeeCard | null };
+      user: { id: string; email: string; employee: EmployeeCard | null };
     }>;
     messages?: Array<{
       id: string;
@@ -167,19 +232,25 @@ function serializeConversation(
       body: string | null;
       attachmentUrl: string | null;
       createdAt: Date;
-      sender: { id: string; employee: { firstName: string; middleName: string | null; lastName: string } | null };
+      sender: { id: string; email: string; employee: { firstName: string; middleName: string | null; lastName: string } | null };
     }>;
   },
   currentUserId: string,
   unread: number
 ) {
   const others = conversation.participants.filter((p) => p.userId !== currentUserId);
-  const peerEmployee = others[0]?.user.employee ?? null;
-  const title = conversation.type === "GROUP"
-    ? (conversation.name ?? "Group")
-    : peerEmployee
-      ? displayName(peerEmployee)
-      : "Chat";
+  const peerUser = others[0]?.user ?? null;
+  const peerEmployee = peerUser?.employee ?? null;
+  let title: string;
+  if (conversation.type === "GROUP") {
+    title = conversation.name ?? "Group";
+  } else if (peerEmployee) {
+    title = personName(peerEmployee)!;
+  } else if (peerUser) {
+    title = participantLabel(peerUser);
+  } else {
+    title = conversation.type === "ADMIN" ? "Admin" : "Chat";
+  }
   const last = conversation.messages?.[0];
   return {
     id: conversation.id,
@@ -190,7 +261,7 @@ function serializeConversation(
     participants: conversation.participants.map((p) => ({
       userId: p.userId,
       role: p.role,
-      displayName: p.user.employee ? displayName(p.user.employee) : "Employee",
+      displayName: participantLabel(p.user),
       jobTitle: p.user.employee?.jobTitle ?? null
     })),
     lastMessage: last ? serializeMessage(last) : null,
@@ -210,15 +281,26 @@ const conversationListInclude = {
   }
 };
 
+function emitConversationUpdated(
+  participants: Array<{ userId: string }>,
+  payload: { conversationId: string; reason: string }
+) {
+  for (const participant of participants) {
+    emitToUser(participant.userId, "chat.conversation.updated", payload);
+  }
+}
+
 export const chatService = {
-  async colleagues(userId: string, input: { page: number; pageSize: number; q?: string }) {
-    const actor = await chatActor(userId);
+  async colleagues(auth: AuthContext, input: { page: number; pageSize: number; q?: string }) {
+    const actor = await resolveActor(auth);
     const q = input.q?.trim();
+    const officeFilter = actor.isAdmin && !actor.isEmployee ? employeeOfficeFilter(actor.officeScope) : {};
     const where = {
       organizationId: actor.organizationId,
       status: "ACTIVE" as const,
-      userId: { not: userId },
+      userId: { not: auth.userId },
       user: { status: "ACTIVE" as const },
+      ...officeFilter,
       ...(q
         ? {
             OR: [
@@ -246,12 +328,13 @@ export const chatService = {
     return { items: rows.map(serializeEmployee), meta: pageMeta(input.page, input.pageSize, total) };
   },
 
-  async listConversations(userId: string, input: { page: number; pageSize: number }) {
-    await chatActor(userId);
+  async listConversations(auth: AuthContext, input: { page: number; pageSize: number; type?: "DIRECT" | "GROUP" | "ADMIN" }) {
+    const actor = await resolveActor(auth);
     const skip = (input.page - 1) * input.pageSize;
     const where = {
-      participants: { some: { userId, leftAt: null } },
-      messages: { some: { deletedAt: null } }
+      participants: { some: { userId: actor.userId, leftAt: null } },
+      ...(input.type ? { type: input.type } : {}),
+      OR: [{ type: { in: ["GROUP" as const, "ADMIN" as const] } }, { messages: { some: { deletedAt: null } } }]
     };
     const [rows, total] = await prisma.$transaction([
       prisma.chatConversation.findMany({
@@ -265,61 +348,187 @@ export const chatService = {
     ]);
     const items = await Promise.all(
       rows.map(async (row) => {
-        const me = row.participants.find((p) => p.userId === userId);
-        const unread = await unreadCount(row.id, userId, me?.lastReadAt ?? null);
-        return serializeConversation(row, userId, unread);
+        const me = row.participants.find((p) => p.userId === actor.userId);
+        const unread = await unreadCount(row.id, actor.userId, me?.lastReadAt ?? null);
+        return serializeConversation(row, actor.userId, unread);
       })
     );
     const unreadTotal = items.reduce((sum, item) => sum + item.unreadCount, 0);
     return { items, meta: pageMeta(input.page, input.pageSize, total), unreadTotal };
   },
 
-  async openDirect(userId: string, peerUserId: string) {
-    const actor = await chatActor(userId);
-    await requirePeer(actor.organizationId, userId, peerUserId);
-    const directKey = directKeyFor(userId, peerUserId);
+  async openDirect(auth: AuthContext, peerUserId: string) {
+    const actor = await resolveActor(auth);
+    requireEmployeeActor(actor);
+    await requirePeer(actor.organizationId, actor.userId, peerUserId);
+    const directKey = directKeyFor(actor.userId, peerUserId);
     const existing = await prisma.chatConversation.findFirst({
       where: { organizationId: actor.organizationId, type: "DIRECT", directKey },
       include: conversationListInclude
     });
     if (existing) {
-      const me = existing.participants.find((p) => p.userId === userId);
+      const me = existing.participants.find((p) => p.userId === actor.userId);
       if (!me) throw new AppError(404, "CONVERSATION_NOT_FOUND", "Conversation not found");
-      const unread = await unreadCount(existing.id, userId, me.lastReadAt);
-      return serializeConversation(existing, userId, unread);
+      const unread = await unreadCount(existing.id, actor.userId, me.lastReadAt);
+      return serializeConversation(existing, actor.userId, unread);
     }
     const created = await prisma.chatConversation.create({
       data: {
         organizationId: actor.organizationId,
         type: "DIRECT",
         directKey,
-        createdById: userId,
+        createdById: actor.userId,
         participants: {
           create: [
-            { userId, role: "OWNER" },
+            { userId: actor.userId, role: "OWNER" },
             { userId: peerUserId, role: "MEMBER" }
           ]
         }
       },
       include: conversationListInclude
     });
-    return serializeConversation(created, userId, 0);
+    emitConversationUpdated(created.participants, { conversationId: created.id, reason: "created" });
+    return serializeConversation(created, actor.userId, 0);
   },
 
-  async get(userId: string, conversationId: string) {
-    await chatActor(userId);
-    const membership = await requireMembership(conversationId, userId);
+  async openAdmin(auth: AuthContext, employeeUserId: string) {
+    const actor = await resolveActor(auth);
+    requireAdminActor(actor);
+    await requirePeer(actor.organizationId, actor.userId, employeeUserId, actor.officeScope);
+    const directKey = adminKeyFor(actor.userId, employeeUserId);
+    const existing = await prisma.chatConversation.findFirst({
+      where: { organizationId: actor.organizationId, type: "ADMIN", directKey },
+      include: conversationListInclude
+    });
+    if (existing) {
+      const me = existing.participants.find((p) => p.userId === actor.userId);
+      if (!me) throw new AppError(404, "CONVERSATION_NOT_FOUND", "Conversation not found");
+      const unread = await unreadCount(existing.id, actor.userId, me.lastReadAt);
+      return serializeConversation(existing, actor.userId, unread);
+    }
+    const created = await prisma.chatConversation.create({
+      data: {
+        organizationId: actor.organizationId,
+        type: "ADMIN",
+        directKey,
+        createdById: actor.userId,
+        participants: {
+          create: [
+            { userId: actor.userId, role: "OWNER" },
+            { userId: employeeUserId, role: "MEMBER" }
+          ]
+        }
+      },
+      include: conversationListInclude
+    });
+    emitConversationUpdated(created.participants, { conversationId: created.id, reason: "created" });
+    return serializeConversation(created, actor.userId, 0);
+  },
+
+  async createGroup(auth: AuthContext, input: { name: string; memberUserIds: string[] }) {
+    const actor = await resolveActor(auth);
+    requireEmployeeActor(actor);
+    const uniqueIds = [...new Set(input.memberUserIds.filter((id) => id !== actor.userId))];
+    for (const peerId of uniqueIds) {
+      await requirePeer(actor.organizationId, actor.userId, peerId);
+    }
+    const created = await prisma.chatConversation.create({
+      data: {
+        organizationId: actor.organizationId,
+        type: "GROUP",
+        name: input.name.trim(),
+        createdById: actor.userId,
+        participants: {
+          create: [
+            { userId: actor.userId, role: "OWNER" },
+            ...uniqueIds.map((userId) => ({ userId, role: "MEMBER" as const }))
+          ]
+        }
+      },
+      include: conversationListInclude
+    });
+    emitConversationUpdated(created.participants, { conversationId: created.id, reason: "created" });
+    return serializeConversation(created, actor.userId, 0);
+  },
+
+  async renameGroup(auth: AuthContext, conversationId: string, name: string) {
+    const actor = await resolveActor(auth);
+    const membership = await requireMembership(conversationId, actor.userId);
+    if (membership.conversation.type !== "GROUP") {
+      throw new AppError(422, "NOT_A_GROUP", "Only group chats can be renamed");
+    }
+    if (membership.role !== "OWNER" && membership.role !== "ADMIN") {
+      throw new AppError(403, "FORBIDDEN", "Only group owners or admins can rename the group");
+    }
+    const updated = await prisma.chatConversation.update({
+      where: { id: conversationId },
+      data: { name: name.trim() },
+      include: conversationListInclude
+    });
+    emitConversationUpdated(updated.participants, { conversationId, reason: "renamed" });
+    const unread = await unreadCount(conversationId, actor.userId, membership.lastReadAt);
+    return serializeConversation(updated, actor.userId, unread);
+  },
+
+  async addGroupMembers(auth: AuthContext, conversationId: string, memberUserIds: string[]) {
+    const actor = await resolveActor(auth);
+    const membership = await requireMembership(conversationId, actor.userId);
+    if (membership.conversation.type !== "GROUP") {
+      throw new AppError(422, "NOT_A_GROUP", "Only group chats support invites");
+    }
+    if (membership.role !== "OWNER" && membership.role !== "ADMIN") {
+      throw new AppError(403, "FORBIDDEN", "Only group owners or admins can invite members");
+    }
+    const activeIds = new Set(membership.conversation.participants.map((p) => p.userId));
+    const toAdd = [...new Set(memberUserIds)].filter((id) => id !== actor.userId && !activeIds.has(id));
+    for (const peerId of toAdd) {
+      await requirePeer(actor.organizationId, actor.userId, peerId);
+    }
+    for (const userId of toAdd) {
+      await prisma.chatParticipant.upsert({
+        where: { conversationId_userId: { conversationId, userId } },
+        create: { conversationId, userId, role: "MEMBER" },
+        update: { leftAt: null, joinedAt: new Date(), role: "MEMBER" }
+      });
+    }
+    const updated = await prisma.chatConversation.findUniqueOrThrow({
+      where: { id: conversationId },
+      include: conversationListInclude
+    });
+    emitConversationUpdated(updated.participants, { conversationId, reason: "members_added" });
+    const unread = await unreadCount(conversationId, actor.userId, membership.lastReadAt);
+    return serializeConversation(updated, actor.userId, unread);
+  },
+
+  async leaveGroup(auth: AuthContext, conversationId: string) {
+    const actor = await resolveActor(auth);
+    const membership = await requireMembership(conversationId, actor.userId);
+    if (membership.conversation.type !== "GROUP") {
+      throw new AppError(422, "NOT_A_GROUP", "You can only leave group chats");
+    }
+    await prisma.chatParticipant.update({
+      where: { conversationId_userId: { conversationId, userId: actor.userId } },
+      data: { leftAt: new Date() }
+    });
+    const remaining = membership.conversation.participants.filter((p) => p.userId !== actor.userId);
+    emitConversationUpdated(remaining, { conversationId, reason: "member_left" });
+    return { success: true };
+  },
+
+  async get(auth: AuthContext, conversationId: string) {
+    const actor = await resolveActor(auth);
+    const membership = await requireMembership(conversationId, actor.userId);
     const conversation = await prisma.chatConversation.findUniqueOrThrow({
       where: { id: conversationId },
       include: conversationListInclude
     });
-    const unread = await unreadCount(conversationId, userId, membership.lastReadAt);
-    return serializeConversation(conversation, userId, unread);
+    const unread = await unreadCount(conversationId, actor.userId, membership.lastReadAt);
+    return serializeConversation(conversation, actor.userId, unread);
   },
 
-  async listMessages(userId: string, conversationId: string, input: { page: number; pageSize: number }) {
-    await chatActor(userId);
-    await requireMembership(conversationId, userId);
+  async listMessages(auth: AuthContext, conversationId: string, input: { page: number; pageSize: number }) {
+    const actor = await resolveActor(auth);
+    await requireMembership(conversationId, actor.userId);
     const skip = (input.page - 1) * input.pageSize;
     const where = { conversationId, deletedAt: null };
     const [rows, total] = await prisma.$transaction([
@@ -338,24 +547,23 @@ export const chatService = {
     };
   },
 
-  async sendMessage(userId: string, conversationId: string, body: string) {
-    const actor = await chatActor(userId);
-    const membership = await requireMembership(conversationId, userId);
-    const others = membership.conversation.participants.filter((p) => p.userId !== userId);
+  async sendMessage(auth: AuthContext, conversationId: string, body: string) {
+    const actor = await resolveActor(auth);
+    const membership = await requireMembership(conversationId, actor.userId);
+    const others = membership.conversation.participants.filter((p) => p.userId !== actor.userId);
     const result = await prisma.$transaction(async (tx) => {
       const message = await tx.chatMessage.create({
-        data: { conversationId, senderId: userId, type: "TEXT", body },
+        data: { conversationId, senderId: actor.userId, type: "TEXT", body },
         include: messageInclude
       });
       await tx.chatParticipant.update({
-        where: { conversationId_userId: { conversationId, userId } },
+        where: { conversationId_userId: { conversationId, userId: actor.userId } },
         data: { lastReadAt: new Date() }
       });
       await tx.chatConversation.update({
         where: { id: conversationId },
         data: { updatedAt: new Date() }
       });
-      const senderName = displayName(actor);
       const preview = body.length > 80 ? `${body.slice(0, 77)}...` : body;
       const notifications = await Promise.all(
         others.map((participant) =>
@@ -363,7 +571,7 @@ export const chatService = {
             data: {
               userId: participant.userId,
               type: "CHAT_MESSAGE",
-              title: senderName,
+              title: actor.displayName,
               message: preview,
               relatedEntityType: "ChatConversation",
               relatedEntityId: conversationId
@@ -381,17 +589,17 @@ export const chatService = {
     return payload;
   },
 
-  async markRead(userId: string, conversationId: string) {
-    await chatActor(userId);
-    await requireMembership(conversationId, userId);
+  async markRead(auth: AuthContext, conversationId: string) {
+    const actor = await resolveActor(auth);
+    await requireMembership(conversationId, actor.userId);
     await prisma.$transaction([
       prisma.chatParticipant.update({
-        where: { conversationId_userId: { conversationId, userId } },
+        where: { conversationId_userId: { conversationId, userId: actor.userId } },
         data: { lastReadAt: new Date() }
       }),
       prisma.notification.updateMany({
         where: {
-          userId,
+          userId: actor.userId,
           type: "CHAT_MESSAGE",
           relatedEntityType: "ChatConversation",
           relatedEntityId: conversationId,

@@ -190,6 +190,7 @@ enum DisplayBoardMode {
 enum ConversationType {
   DIRECT
   GROUP
+  ADMIN
 }
 
 enum ChatMemberRole {
