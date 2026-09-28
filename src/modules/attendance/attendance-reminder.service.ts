@@ -4,6 +4,7 @@ import { deliverNotification } from "../notifications/notification.service.js";
 import { emitToUser } from "../../realtime/socket.server.js";
 import { workDateFromKey } from "../../shared/work-date.js";
 import { computeDailySchedule, reminderTargetWindow } from "./attendance-schedule.js";
+import { holidayLookup } from "../holidays/holiday.service.js";
 
 type ReminderCounts = { checkInSent: number; checkOutSent: number };
 
@@ -127,7 +128,7 @@ async function processCheckInReminders(now: Date): Promise<number> {
     if (daily.scheduledIn < windowStart || daily.scheduledIn > windowEnd) continue;
 
     const workDate = workDateFromKey(daily.workDate);
-    const [timesheet, leave, existing] = await Promise.all([
+    const [timesheet, leave, holiday, existing] = await Promise.all([
       prisma.timesheet.findUnique({
         where: { employeeId_workDate: { employeeId: employee.id, workDate } },
         select: { id: true }
@@ -141,13 +142,14 @@ async function processCheckInReminders(now: Date): Promise<number> {
         },
         select: { id: true }
       }),
+      holidayLookup.forEmployee(employee.id, daily.workDate),
       prisma.attendanceReminderLog.findUnique({
         where: {
           employeeId_workDate_kind: { employeeId: employee.id, workDate, kind: "CHECK_IN" }
         }
       })
     ]);
-    if (timesheet || leave || existing) continue;
+    if (timesheet || leave || holiday || existing) continue;
     try {
       await sendReminder({
         userId: employee.userId,

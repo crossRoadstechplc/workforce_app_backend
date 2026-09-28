@@ -4,6 +4,7 @@ import { AppError } from "../../shared/errors/app-error.js";
 import { deliverNotification } from "../notifications/notification.service.js";
 import { emitToOfficeDisplay, emitToOrgAdmins, emitToUser } from "../../realtime/socket.server.js";
 import { formatWorkDateKey, todayWorkDateKey } from "../../shared/work-date.js";
+import { assertWorksheetNotCopied } from "../history/worksheet-duplicate.js";
 import { computeCheckoutMetrics } from "./auto-checkout.logic.js";
 
 type OpenTimesheet = {
@@ -87,16 +88,34 @@ export async function closeOpenTimesheet(input: {
       });
     }
 
-    if (createWorksheet) {
-      await tx.worksheet.create({
-        data: {
-          timesheetId: open.id,
-          employeeId: open.employeeId,
-          workDate: open.workDate,
-          workDescription: workDescription!,
-          submittedAt: checkoutAt
-        }
+    if (createWorksheet && workDescription) {
+      const existingWorksheet = await tx.worksheet.findUnique({
+        where: { timesheetId: open.id },
+        select: { id: true }
       });
+      await assertWorksheetNotCopied({
+        employeeId: open.employeeId,
+        workDate: open.workDate,
+        workDescription,
+        excludeWorksheetId: existingWorksheet?.id,
+        db: tx
+      });
+      if (existingWorksheet) {
+        await tx.worksheet.update({
+          where: { id: existingWorksheet.id },
+          data: { workDescription, submittedAt: checkoutAt }
+        });
+      } else {
+        await tx.worksheet.create({
+          data: {
+            timesheetId: open.id,
+            employeeId: open.employeeId,
+            workDate: open.workDate,
+            workDescription,
+            submittedAt: checkoutAt
+          }
+        });
+      }
     }
 
     const timesheet = await tx.timesheet.findUniqueOrThrow({

@@ -25,6 +25,7 @@ import {
   adminLeaveRosterRouter
 } from "./modules/history/history.routes.js";
 import { leaveRouter, adminLeaveRouter } from "./modules/leave/leave.routes.js";
+import { holidayRouter, adminHolidayRouter } from "./modules/holidays/holiday.routes.js";
 import { evaluationRouter, adminEvaluationRouter } from "./modules/performance/performance.routes.js";
 import { meetingRouter, adminMeetingRouter } from "./modules/meetings/meeting.routes.js";
 import { displayRouter, adminDisplayRouter } from "./modules/display/display.routes.js";
@@ -73,6 +74,7 @@ app.use("/api/v1/attendance/correctness-requests", attendanceCorrectnessRouter);
 app.use("/api/v1/timesheets", timesheetHistoryRouter);
 app.use("/api/v1/worksheets", worksheetHistoryRouter);
 app.use("/api/v1/leave-requests", leaveRouter);
+app.use("/api/v1/holidays", holidayRouter);
 app.use("/api/v1/evaluations", evaluationRouter);
 app.use("/api/v1/meetings", meetingRouter);
 app.use("/api/v1/display", displayRouter);
@@ -86,6 +88,7 @@ app.use("/api/v1/admin/attendance/correctness-requests", adminAttendanceCorrectn
 app.use("/api/v1/admin/worksheets", adminWorksheetRouter);
 app.use("/api/v1/admin/leave", adminLeaveRosterRouter);
 app.use("/api/v1/admin/leave-requests", adminLeaveRouter);
+app.use("/api/v1/admin/holidays", adminHolidayRouter);
 app.use("/api/v1/admin/evaluations", adminEvaluationRouter);
 app.use("/api/v1/admin/meetings", adminMeetingRouter);
 app.use("/api/v1/admin/displays", adminDisplayRouter);

@@ -6,7 +6,9 @@ import { deliverNotification } from "../notifications/notification.service.js";
 import { emitToOfficeDisplay, emitToOrgAdmins, emitToOrgRole, emitToUser } from "../../realtime/socket.server.js";
 import { ROLE } from "../../shared/tenancy.js";
 import { formatWorkDateKey, todayWorkDate, todayWorkDateKey, workDateFromKey } from "../../shared/work-date.js";
+import { holidayLookup } from "../holidays/holiday.service.js";
 import { closeOpenTimesheet } from "./timesheet-close.js";
+import { canReCheckIn } from "./flexible-day.logic.js";
 
 type ClientChannel = "MOBILE" | "DESKTOP";
 type GpsFix = { latitude: number; longitude: number; accuracyMeters: number; capturedAt: Date };
@@ -72,6 +74,17 @@ async function assertNotOnApprovedLeave(employeeId: string, workDateKey: string)
   });
   if (leave) {
     throw new AppError(409, "ON_APPROVED_LEAVE", "You are on approved leave for this day and cannot check in");
+  }
+}
+
+async function assertNotOnPublicHoliday(employeeId: string, workDateKey: string) {
+  const holiday = await holidayLookup.forEmployee(employeeId, workDateKey);
+  if (holiday) {
+    throw new AppError(
+      409,
+      "ON_PUBLIC_HOLIDAY",
+      `${holiday.nameEn} is a public holiday — check-in is not required`
+    );
   }
 }
 
@@ -202,14 +215,22 @@ function attendanceClock(employee: Awaited<ReturnType<typeof employeeContext>>, 
   };
 }
 
-function formatTimesheetResponse<T extends { workDate: Date; isOpen: boolean; timezone: string }>(timesheet: T | null) {
+function formatTimesheetResponse<
+  T extends {
+    workDate: Date;
+    isOpen: boolean;
+    timezone: string;
+    checkOutSource?: "EMPLOYEE" | "SYSTEM" | "ADMIN" | null;
+  }
+>(timesheet: T | null) {
   if (!timesheet) return null;
   const workDate = formatWorkDateKey(timesheet.workDate);
   const today = todayWorkDateKey(timesheet.timezone);
   return {
     ...timesheet,
     workDate,
-    isCarriedOverOpenShift: timesheet.isOpen && workDate < today
+    isCarriedOverOpenShift: timesheet.isOpen && workDate < today,
+    canReCheckIn: canReCheckIn(timesheet)
   };
 }
 
@@ -288,13 +309,31 @@ export const attendanceService = {
     const now = new Date();
     const clock = attendanceClock(employee, now);
     await assertNotOnApprovedLeave(employee.id, clock.workDate);
+    await assertNotOnPublicHoliday(employee.id, clock.workDate);
+
+    const todayTimesheet = await prisma.timesheet.findUnique({
+      where: {
+        employeeId_workDate: {
+          employeeId: employee.id,
+          workDate: workDateFromKey(clock.workDate)
+        }
+      },
+      select: { isOpen: true, checkOutSource: true, isLate: true, lateMinutes: true, actualCheckIn: true }
+    });
+    if (todayTimesheet && !todayTimesheet.isOpen && !canReCheckIn(todayTimesheet)) {
+      throw new AppError(409, "DAY_ALREADY_CLOSED", "This day's attendance was closed and cannot be checked in again");
+    }
+    const reentry = Boolean(todayTimesheet && canReCheckIn(todayTimesheet));
+
     const presence = await resolvePresence(input, employee.office!, employee.organizationId, now);
     return {
       insideRadius: presence.geo.insideRadius,
       distanceMeters: presence.geo.distanceMeters ?? 0,
-      isLate: clock.isLate,
-      lateMinutes: clock.lateMinutes,
-      requiresLateReason: clock.isLate,
+      isLate: reentry ? false : clock.isLate,
+      lateMinutes: reentry ? 0 : clock.lateMinutes,
+      requiresLateReason: reentry ? false : clock.isLate,
+      reentry,
+      firstCheckInAt: reentry ? todayTimesheet!.actualCheckIn : null,
       workDate: clock.workDate,
       serverTime: now
     };
@@ -310,19 +349,91 @@ export const attendanceService = {
     const now = new Date();
     const clock = attendanceClock(employee, now);
     await assertNotOnApprovedLeave(employee.id, clock.workDate);
+    await assertNotOnPublicHoliday(employee.id, clock.workDate);
     const presence = await resolvePresence(input, employee.office!, employee.organizationId, now);
     if (!presence.geo.insideRadius) throw new AppError(422, "OUTSIDE_OFFICE_RADIUS", "Check-in is outside the allowed office radius");
-    if (clock.isLate && !input.lateReasonType) throw new AppError(422, "LATE_REASON_REQUIRED", "A late reason is required");
-    if (!clock.isLate && (input.lateReasonType || input.lateReasonDescription)) throw new AppError(422, "LATE_REASON_NOT_ALLOWED", "A late reason is only accepted for late check-in");
     await attendancePhotoService.validatePhotoUrl(employee.organizationId, input.photoUrl);
+
+    const workDate = workDateFromKey(clock.workDate);
+    const todayExisting = await prisma.timesheet.findUnique({
+      where: { employeeId_workDate: { employeeId: employee.id, workDate } },
+      select: { id: true, isOpen: true, checkOutSource: true, isLate: true, lateMinutes: true }
+    });
+
+    if (todayExisting?.isOpen) {
+      const openSheet = await prisma.timesheet.findUnique({
+        where: { id: todayExisting.id },
+        include: { lateReason: true, locations: true }
+      });
+      return formatTimesheetResponse(openSheet)!;
+    }
+    if (todayExisting && !todayExisting.isOpen && !canReCheckIn(todayExisting)) {
+      throw new AppError(409, "DAY_ALREADY_CLOSED", "This day's attendance was closed and cannot be checked in again");
+    }
+
+    const isReentry = Boolean(todayExisting && canReCheckIn(todayExisting));
+
+    if (isReentry) {
+      if (input.lateReasonType || input.lateReasonDescription) {
+        throw new AppError(422, "LATE_REASON_NOT_ALLOWED", "A late reason is only accepted for the first check-in of the day");
+      }
+    } else {
+      if (clock.isLate && !input.lateReasonType) throw new AppError(422, "LATE_REASON_REQUIRED", "A late reason is required");
+      if (!clock.isLate && (input.lateReasonType || input.lateReasonDescription)) {
+        throw new AppError(422, "LATE_REASON_NOT_ALLOWED", "A late reason is only accepted for late check-in");
+      }
+    }
 
     const result = await prisma.$transaction(async (tx) => {
       const open = await tx.timesheet.findFirst({ where: { employeeId: employee.id, isOpen: true }, select: { id: true } });
       if (open) throw new AppError(409, "ALREADY_CHECKED_IN", "Close your open shift with checkout before checking in again");
+
+      if (isReentry && todayExisting) {
+        const changed = await tx.timesheet.updateMany({
+          where: { id: todayExisting.id, isOpen: false, checkOutSource: "EMPLOYEE" },
+          data: {
+            actualCheckOut: null,
+            workedMinutes: 0,
+            earlyCheckoutMinutes: 0,
+            overtimeMinutes: 0,
+            isEarlyCheckout: false,
+            isMissingCheckout: false,
+            isOpen: true,
+            status: todayExisting.isLate ? "PRESENT_LATE" : "PRESENT_ON_TIME",
+            checkOutSource: null,
+            checkOutIdempotencyKey: null
+          }
+        });
+        if (!changed.count) {
+          throw new AppError(409, "DAY_ALREADY_CLOSED", "This day's attendance can no longer be reopened");
+        }
+        await tx.attendanceLocation.create({
+          data: {
+            timesheetId: todayExisting.id,
+            ...locationCreate(presence, "CHECK_IN", employee.office!.allowedRadiusMeters, now, input.photoUrl)
+          }
+        });
+        const timesheet = await tx.timesheet.findUniqueOrThrow({
+          where: { id: todayExisting.id },
+          include: { lateReason: true, locations: true }
+        });
+        const notification = await tx.notification.create({
+          data: {
+            userId,
+            type: "CHECK_IN_SUCCESS",
+            title: "Checked in again",
+            message: "You checked in again. Your first check-in time for today is unchanged.",
+            relatedEntityType: "Timesheet",
+            relatedEntityId: timesheet.id
+          }
+        });
+        return { timesheet, notification, isReentry: true as const, lateMinutes: todayExisting.lateMinutes };
+      }
+
       const timesheet = await tx.timesheet.create({
         data: {
           employeeId: employee.id, officeId: employee.office!.id, scheduleId: employee.schedule!.id,
-          workDate: workDateFromKey(clock.workDate),
+          workDate,
           scheduledCheckIn: clock.scheduledIn.toUTC().toJSDate(), scheduledCheckOut: clock.scheduledOut.toUTC().toJSDate(), actualCheckIn: now,
           lateMinutes: clock.lateMinutes, isLate: clock.isLate, status: clock.isLate ? "PRESENT_LATE" : "PRESENT_ON_TIME",
           checkInIdempotencyKey: input.idempotencyKey,
@@ -336,11 +447,15 @@ export const attendanceService = {
         }, include: { lateReason: true, locations: true }
       });
       const notification = await tx.notification.create({ data: { userId, type: clock.isLate ? "CHECK_IN_LATE" : "CHECK_IN_SUCCESS", title: clock.isLate ? "Late check-in recorded" : "Check-in successful", message: clock.isLate ? `You checked in ${clock.lateMinutes} minute(s) late.` : "Your check-in was recorded successfully.", relatedEntityType: "Timesheet", relatedEntityId: timesheet.id } });
-      return { timesheet, notification };
+      return { timesheet, notification, isReentry: false as const, lateMinutes: clock.lateMinutes };
     });
     await deliverNotification(result.notification);
-    emitToUser(userId, "attendance.checked_in", { timesheetId: result.timesheet.id, status: result.timesheet.status });
-    emitToOrgAdmins(employee.organizationId, clock.isLate ? "employee.checked_in_late" : "employee.checked_in", { employeeId: employee.id, timesheetId: result.timesheet.id, lateMinutes: clock.lateMinutes });
+    emitToUser(userId, "attendance.checked_in", { timesheetId: result.timesheet.id, status: result.timesheet.status, reentry: result.isReentry });
+    emitToOrgAdmins(
+      employee.organizationId,
+      result.isReentry ? "employee.checked_in" : result.lateMinutes > 0 ? "employee.checked_in_late" : "employee.checked_in",
+      { employeeId: employee.id, timesheetId: result.timesheet.id, lateMinutes: result.lateMinutes, reentry: result.isReentry }
+    );
     emitToOfficeDisplay(employee.organizationId, employee.officeId, "display.people_changed", { employeeId: employee.id });
     return formatTimesheetResponse(result.timesheet)!;
   },

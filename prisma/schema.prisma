@@ -123,6 +123,17 @@ enum NotificationType {
   MEETING_RESCHEDULED
   MEETING_CANCELLED
   CHAT_MESSAGE
+  HOLIDAY_ANNOUNCED
+}
+
+enum HolidaySource {
+  KENAT
+  CUSTOM
+}
+
+enum HolidayApplicationStatus {
+  APPLIED
+  REVOKED
 }
 
 enum DevicePlatform {
@@ -259,6 +270,9 @@ model Organization {
   attendanceCorrectnessRequests AttendanceCorrectnessRequest[]
   ttWorkspace           TtWorkspace?
   annualLeaveBuckets    AnnualLeaveBucket[]
+  organizationHolidays  OrganizationHoliday[]
+  holidayApplications   HolidayApplication[]
+  holidayAssignments    HolidayAssignment[]
   @@map("organizations")
 }
 
@@ -328,6 +342,8 @@ model User {
   chatMessages            ChatMessage[]              @relation("ChatSender")
   vaultCredentials        VaultCredential[]          @relation("VaultCredentialCreator")
   reviewedCorrectnessRequests AttendanceCorrectnessRequest[] @relation("CorrectnessReviewer")
+  holidayApplications     HolidayApplication[] @relation("HolidayAppliedBy")
+  holidayAutoEnabled      OrganizationHoliday[] @relation("HolidayAutoEnabledBy")
   ttStaffMembers          TtStaffMember[]
   ttSessionExchanges      TtSessionExchange[]
   @@map("users")
@@ -491,6 +507,7 @@ model Employee {
   meetingBookings     MeetingBooking[]
   attendanceCorrectnessRequests AttendanceCorrectnessRequest[]
   attendanceReminderLogs AttendanceReminderLog[]
+  holidayAssignments  HolidayAssignment[]
   ttStaffMember       TtStaffMember?
   @@unique([organizationId, employeeCode])
   @@index([organizationId, status])
@@ -823,6 +840,93 @@ model Notification {
   user              User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   @@index([userId, isRead, createdAt])
   @@map("notifications")
+}
+
+model OrganizationHoliday {
+  id                   String        @id @default(uuid()) @db.Uuid
+  organizationId       String        @map("organization_id") @db.Uuid
+  kenatKey             String?       @map("kenat_key")
+  linkedKenatKey       String?       @map("linked_kenat_key")
+  nameEn               String        @map("name_en")
+  nameAm               String?       @map("name_am")
+  description          String?
+  tags                 String[]      @default([])
+  gregorianDate        DateTime      @map("gregorian_date") @db.Date
+  ethiopianYear        Int?          @map("ethiopian_year")
+  ethiopianMonth       Int?          @map("ethiopian_month")
+  ethiopianDay         Int?          @map("ethiopian_day")
+  source               HolidaySource @default(KENAT)
+  autoApply            Boolean       @default(false) @map("auto_apply")
+  autoNotify           Boolean       @default(true) @map("auto_notify")
+  autoMessage          String?       @map("auto_message")
+  autoOfficeId         String?       @map("auto_office_id") @db.Uuid
+  autoAllEmployees     Boolean       @default(true) @map("auto_all_employees")
+  autoEmployeeIds      String[]      @default([]) @map("auto_employee_ids")
+  autoEnabledById      String?       @map("auto_enabled_by_id") @db.Uuid
+  autoAppliedAt        DateTime?     @map("auto_applied_at") @db.Timestamptz(6)
+  createdAt            DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization         Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  autoEnabledBy        User?         @relation("HolidayAutoEnabledBy", fields: [autoEnabledById], references: [id], onDelete: SetNull)
+  applications         HolidayApplication[]
+  assignments          HolidayAssignment[]
+  @@unique([organizationId, kenatKey, gregorianDate])
+  @@index([organizationId, gregorianDate])
+  @@index([autoApply, gregorianDate, autoAppliedAt])
+  @@map("organization_holidays")
+}
+
+model HolidayApplication {
+  id              String                   @id @default(uuid()) @db.Uuid
+  organizationId  String                   @map("organization_id") @db.Uuid
+  holidayId       String                   @map("holiday_id") @db.Uuid
+  appliedById     String                   @map("applied_by_id") @db.Uuid
+  allOffices      Boolean                  @default(true) @map("all_offices")
+  allEmployees    Boolean                  @default(true) @map("all_employees")
+  notifyEmployees Boolean                  @default(true) @map("notify_employees")
+  message         String?
+  status          HolidayApplicationStatus @default(APPLIED)
+  assignmentCount Int                      @default(0) @map("assignment_count")
+  notifiedCount   Int                      @default(0) @map("notified_count")
+  createdAt       DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+  appliedAt       DateTime                 @default(now()) @map("applied_at") @db.Timestamptz(6)
+  organization    Organization             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  holiday         OrganizationHoliday      @relation(fields: [holidayId], references: [id], onDelete: Cascade)
+  appliedBy       User                     @relation("HolidayAppliedBy", fields: [appliedById], references: [id], onDelete: Restrict)
+  targets         HolidayApplicationTarget[]
+  assignments     HolidayAssignment[]
+  @@index([organizationId, holidayId])
+  @@index([holidayId, status])
+  @@map("holiday_applications")
+}
+
+model HolidayApplicationTarget {
+  id            String             @id @default(uuid()) @db.Uuid
+  applicationId String             @map("application_id") @db.Uuid
+  officeId      String?            @map("office_id") @db.Uuid
+  employeeId    String?            @map("employee_id") @db.Uuid
+  application   HolidayApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  @@index([applicationId])
+  @@map("holiday_application_targets")
+}
+
+model HolidayAssignment {
+  id             String                @id @default(uuid()) @db.Uuid
+  organizationId String                @map("organization_id") @db.Uuid
+  holidayId      String                @map("holiday_id") @db.Uuid
+  applicationId  String                @map("application_id") @db.Uuid
+  employeeId     String                @map("employee_id") @db.Uuid
+  workDate       DateTime              @map("work_date") @db.Date
+  createdAt      DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  organization   Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  holiday        OrganizationHoliday   @relation(fields: [holidayId], references: [id], onDelete: Cascade)
+  application    HolidayApplication    @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  employee       Employee              @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  @@unique([employeeId, workDate])
+  @@index([organizationId, workDate])
+  @@index([employeeId, workDate])
+  @@index([holidayId])
+  @@map("holiday_assignments")
 }
 
 model AttendanceReminderLog {

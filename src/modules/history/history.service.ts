@@ -8,6 +8,7 @@ import { assertSameOrganization } from "../../shared/tenancy.js";
 import { assertOfficeInScope, employeeOfficeFilter, type OfficeScope } from "../../shared/office-scope.js";
 import { formatWorkDateKey, mapFormattedWorkDates, withFormattedWorkDate } from "../../shared/work-date.js";
 import { attendanceCorrectnessService } from "../attendance-correctness/attendance-correctness.service.js";
+import { assertWorksheetNotCopied } from "./worksheet-duplicate.js";
 
 async function employeeForUser(userId: string) {
   const e = await prisma.employee.findUnique({ where: { userId } });
@@ -120,13 +121,20 @@ export const historyService = {
     if (timesheet.worksheet) {
       throw new AppError(409, "WORKSHEET_EXISTS", "A worksheet already exists for this timesheet");
     }
+    const workDescription = input.workDescription.trim();
+    await assertWorksheetNotCopied({
+      employeeId: e.id,
+      workDate: timesheet.workDate,
+      workDescription,
+      db: prisma
+    });
     const now = new Date();
     const created = await prisma.worksheet.create({
       data: {
         timesheetId: timesheet.id,
         employeeId: e.id,
         workDate: timesheet.workDate,
-        workDescription: input.workDescription.trim(),
+        workDescription,
         submittedAt: now,
         status: "SUBMITTED"
       },
@@ -138,10 +146,18 @@ export const historyService = {
     const e = await employeeForUser(userId);
     const current = await prisma.worksheet.findFirst({ where: { id, employeeId: e.id } });
     if (!current) throw new AppError(404, "WORKSHEET_NOT_FOUND", "Worksheet not found");
+    const workDescription = input.workDescription.trim();
+    await assertWorksheetNotCopied({
+      employeeId: e.id,
+      workDate: current.workDate,
+      workDescription,
+      excludeWorksheetId: current.id,
+      db: prisma
+    });
     const updated = await prisma.worksheet.update({
       where: { id },
       data: {
-        workDescription: input.workDescription.trim(),
+        workDescription,
         status: "SUBMITTED",
         submittedAt: new Date(),
         reviewedBy: null,

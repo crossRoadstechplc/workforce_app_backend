@@ -8,6 +8,7 @@ import { emitToOrgAdmins, emitToUser } from "../../realtime/socket.server.js";
 import { ROLE } from "../../shared/tenancy.js";
 import { assertOfficeInScope, employeeOfficeFilter, type OfficeScope } from "../../shared/office-scope.js";
 import { formatWorkDateKey, workDateFromKey } from "../../shared/work-date.js";
+import { holidayLookup } from "../holidays/holiday.service.js";
 
 type ScheduleInfo = {
   id: string;
@@ -237,6 +238,11 @@ export const attendanceCorrectnessService = {
         select: { id: true }
       });
       if (onLeave) throw new AppError(409, "ON_LEAVE", `You were on leave on ${workDateKey}`);
+
+      const onHoliday = await holidayLookup.forEmployee(employee.id, workDateKey);
+      if (onHoliday) {
+        throw new AppError(409, "ON_PUBLIC_HOLIDAY", `${workDateKey} was a public holiday (${onHoliday.nameEn})`);
+      }
 
       const pending = await prisma.attendanceCorrectnessRequest.findFirst({
         where: { employeeId: employee.id, workDate, status: "PENDING" }

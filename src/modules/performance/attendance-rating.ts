@@ -7,6 +7,7 @@ export type AttendanceRatingInput = {
   lateMinutes: number;
   missingCheckoutDays: number;
   approvedLeaveDays: number;
+  holidayDays?: number;
 };
 
 export type AttendanceDeduction = {
@@ -22,6 +23,7 @@ export type AttendanceRatingResult = {
   lateMinutes: number;
   missingCheckoutDays: number;
   approvedLeaveDays: number;
+  holidayDays: number;
   unexcusedAbsentDays: number;
   lateRate: number;
   deductions: AttendanceDeduction[];
@@ -42,8 +44,9 @@ export function rateReliabilityAttendance(input: AttendanceRatingInput): Attenda
   const lateMinutes = Math.max(0, input.lateMinutes);
   const missingCheckoutDays = Math.max(0, input.missingCheckoutDays);
   const approvedLeaveDays = Math.max(0, input.approvedLeaveDays);
+  const holidayDays = Math.max(0, input.holidayDays ?? 0);
 
-  const unexcusedAbsentDays = Math.max(0, expectedDays - attendanceDays - approvedLeaveDays);
+  const unexcusedAbsentDays = Math.max(0, expectedDays - attendanceDays - approvedLeaveDays - holidayDays);
   const lateRate = attendanceDays > 0 ? lateDays / attendanceDays : 0;
 
   const deductions: AttendanceDeduction[] = [];
@@ -82,6 +85,7 @@ export function rateReliabilityAttendance(input: AttendanceRatingInput): Attenda
     lateMinutes,
     missingCheckoutDays,
     approvedLeaveDays,
+    holidayDays,
     unexcusedAbsentDays,
     lateRate: Math.round(lateRate * 1000) / 1000,
     deductions

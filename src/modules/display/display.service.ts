@@ -382,6 +382,10 @@ export const displayService = {
         away.push({ ...person, reason: "ON_LEAVE" });
         continue;
       }
+      if (row.attendanceState === "PUBLIC_HOLIDAY") {
+        away.push({ ...person, reason: "PUBLIC_HOLIDAY" });
+        continue;
+      }
       if (inStates.has(row.attendanceState)) {
         inOffice.push({
           ...person,

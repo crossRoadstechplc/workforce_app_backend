@@ -5,6 +5,7 @@ import { employeeOfficeFilter, type OfficeScope } from "../../shared/office-scop
 import { formatWorkDateKey } from "../../shared/work-date.js";
 import { leaveFractionForWeekday } from "../../shared/schedule-day-fraction.js";
 import { attendanceCorrectnessService } from "../attendance-correctness/attendance-correctness.service.js";
+import { holidayLookup } from "../holidays/holiday.service.js";
 
 type ScheduleInfo = {
   workingDays: number[];
@@ -77,6 +78,7 @@ function deriveAttendanceState(input: {
     actualCheckOut: Date | null;
   } | null;
   onLeave: boolean;
+  onHoliday: boolean;
   workingDay: boolean;
 }) {
   if (input.timesheet) {
@@ -86,6 +88,7 @@ function deriveAttendanceState(input: {
     return input.timesheet.status;
   }
   if (input.onLeave) return "ON_LEAVE";
+  if (input.onHoliday) return "PUBLIC_HOLIDAY";
   if (!input.workingDay) return "NON_WORKING_DAY";
   return "NOT_CHECKED_IN";
 }
@@ -118,7 +121,7 @@ export const rosterService = {
         include: {
           lateReason: true,
           worksheet: { select: { id: true, status: true } },
-          locations: { select: { type: true, photoUrl: true } }
+          locations: { select: { type: true, photoUrl: true, createdAt: true } }
         }
       }),
       prisma.leaveRequest.findMany({
@@ -147,15 +150,18 @@ export const rosterService = {
     const leaveByEmployee = new Map(approvedLeaves.map((l) => [l.employeeId, l]));
     const worksheetByEmployee = new Map(worksheets.map((w) => [w.employeeId, w]));
     const correctnessByEmployee = await attendanceCorrectnessService.mapForEmployees(employeeIds, start);
+    const holidayByEmployee = await holidayLookup.mapForEmployees(employeeIds, start);
 
     const items = employees.map((e) => {
       const timesheet = timesheetByEmployee.get(e.id) ?? null;
       const leave = leaveByEmployee.get(e.id) ?? null;
       const worksheet = worksheetByEmployee.get(e.id) ?? null;
+      const holiday = holidayByEmployee.get(e.id) ?? null;
       const workingDay = isWorkingDay(e.schedule, weekday);
       const attendanceState = deriveAttendanceState({
         timesheet,
         onLeave: !!leave,
+        onHoliday: !!holiday,
         workingDay
       });
 
@@ -179,8 +185,15 @@ export const rosterService = {
               isMissingCheckout: timesheet.isMissingCheckout,
               checkOutSource: timesheet.checkOutSource,
               lateReason: timesheet.lateReason,
-              checkInPhotoUrl: timesheet.locations.find((l) => l.type === "CHECK_IN")?.photoUrl ?? null,
-              checkOutPhotoUrl: timesheet.locations.find((l) => l.type === "CHECK_OUT")?.photoUrl ?? null
+              checkInPhotoUrl:
+                timesheet.locations.filter((l) => l.type === "CHECK_IN").sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())[0]
+                  ?.photoUrl ?? null,
+              checkOutPhotoUrl: (() => {
+                const outs = timesheet.locations
+                  .filter((l) => l.type === "CHECK_OUT")
+                  .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+                return outs[outs.length - 1]?.photoUrl ?? null;
+              })()
             }
           : null,
         leave: leave
@@ -191,6 +204,15 @@ export const rosterService = {
               startDate: leave.startDate,
               endDate: leave.endDate,
               leaveType: leave.leaveType
+            }
+          : null,
+        holiday: holiday
+          ? {
+              id: holiday.id,
+              kenatKey: holiday.kenatKey,
+              nameEn: holiday.nameEn,
+              nameAm: holiday.nameAm,
+              label: holiday.nameEn
             }
           : null,
         worksheet: worksheet
@@ -217,6 +239,7 @@ export const rosterService = {
       checkedOut: items.filter((r) => !!r.timesheet?.actualCheckOut && !r.timesheet.isOpen).length,
       late: items.filter((r) => r.timesheet?.isLate).length,
       onLeave: items.filter((r) => r.attendanceState === "ON_LEAVE").length,
+      onHoliday: items.filter((r) => r.attendanceState === "PUBLIC_HOLIDAY").length,
       notCheckedIn: items.filter((r) => r.attendanceState === "NOT_CHECKED_IN").length,
       correctnessPending: items.filter((r) => r.correctnessStatus === "PENDING").length,
       worksheetsSubmitted: items.filter((r) => !!r.worksheet).length,
@@ -294,6 +317,7 @@ export const rosterService = {
       list.push(l);
       leavesByEmployee.set(l.employeeId, list);
     }
+    const holidayDatesByEmployee = await holidayLookup.employeeHolidayDates(employeeIds, start, endExclusive);
 
     const items = employees.map((e) => {
       let missingCheckInDays = 0;
@@ -302,11 +326,13 @@ export const rosterService = {
       let systemCheckoutDays = 0;
       let lateDays = 0;
       let leaveDays = 0;
+      let holidayDays = 0;
       let presentDays = 0;
       let workingDays = 0;
 
       const empTimesheets = timesheetsByEmployee.get(e.id) ?? [];
       const empLeaves = leavesByEmployee.get(e.id) ?? [];
+      const empHolidays = holidayDatesByEmployee.get(e.id) ?? new Set<string>();
       const timesheetByDate = new Map(empTimesheets.map((t) => [formatWorkDateKey(t.workDate), t]));
 
       for (let d = rangeStart; d <= lastDay; d = d.plus({ days: 1 })) {
@@ -337,6 +363,11 @@ export const rosterService = {
           continue;
         }
 
+        if (empHolidays.has(key)) {
+          holidayDays += 1;
+          continue;
+        }
+
         const timesheet = timesheetByDate.get(key);
         if (!timesheet) {
           missingCheckInDays += 1;
@@ -360,6 +391,7 @@ export const rosterService = {
         workingDays,
         presentDays,
         leaveDays: Math.round(leaveDays * 100) / 100,
+        holidayDays,
         lateDays,
         missingCheckInDays,
         missingCheckOutDays,
@@ -375,7 +407,8 @@ export const rosterService = {
       totalMissingCheckInDays: items.reduce((sum, i) => sum + i.missingCheckInDays, 0),
       totalMissingCheckOutDays: items.reduce((sum, i) => sum + i.missingCheckOutDays, 0),
       totalEmployeeCheckouts: items.reduce((sum, i) => sum + i.employeeCheckoutDays, 0),
-      totalSystemCheckouts: items.reduce((sum, i) => sum + i.systemCheckoutDays, 0)
+      totalSystemCheckouts: items.reduce((sum, i) => sum + i.systemCheckoutDays, 0),
+      totalHolidayDays: items.reduce((sum, i) => sum + i.holidayDays, 0)
     };
 
     return {
@@ -505,7 +538,7 @@ export const rosterService = {
     });
 
     const employeeIds = employees.map((e) => e.id);
-    const [worksheets, timesheets] = await prisma.$transaction([
+    const [worksheets, timesheets, approvedLeaves] = await prisma.$transaction([
       prisma.worksheet.findMany({
         where: { employeeId: { in: employeeIds }, workDate: { gte: start, lt: end } },
         select: {
@@ -520,20 +553,46 @@ export const rosterService = {
       prisma.timesheet.findMany({
         where: { employeeId: { in: employeeIds }, workDate: { gte: start, lt: end } },
         select: { id: true, employeeId: true, workedMinutes: true, status: true, actualCheckIn: true, actualCheckOut: true }
+      }),
+      prisma.leaveRequest.findMany({
+        where: {
+          employeeId: { in: employeeIds },
+          status: "APPROVED",
+          startDate: { lte: start },
+          endDate: { gte: start }
+        },
+        select: { employeeId: true }
       })
     ]);
 
     const worksheetByEmployee = new Map(worksheets.map((w) => [w.employeeId, w]));
     const timesheetByEmployee = new Map(timesheets.map((t) => [t.employeeId, t]));
+    const leaveSet = new Set(approvedLeaves.map((l) => l.employeeId));
+    const holidayByEmployee = await holidayLookup.mapForEmployees(employeeIds, start);
 
     const items = employees.map((e) => {
       const worksheet = worksheetByEmployee.get(e.id) ?? null;
       const timesheet = timesheetByEmployee.get(e.id) ?? null;
-      const worksheetState = worksheet ? worksheet.status : "MISSING";
+      const onLeave = leaveSet.has(e.id);
+      const onHoliday = holidayByEmployee.has(e.id);
+      const worksheetState = worksheet
+        ? worksheet.status
+        : onLeave
+          ? "ON_LEAVE"
+          : onHoliday
+            ? "PUBLIC_HOLIDAY"
+            : "MISSING";
       return {
         employee: person(e),
         office: e.office ? { id: e.office.id, name: e.office.name } : null,
         worksheetState,
+        holiday: onHoliday
+          ? {
+              id: holidayByEmployee.get(e.id)!.id,
+              nameEn: holidayByEmployee.get(e.id)!.nameEn,
+              label: holidayByEmployee.get(e.id)!.nameEn
+            }
+          : null,
         worksheet: worksheet
           ? {
               id: worksheet.id,
@@ -560,7 +619,9 @@ export const rosterService = {
       totalEmployees: items.length,
       submitted: items.filter((r) => r.worksheetState === "SUBMITTED").length,
       reviewed: items.filter((r) => r.worksheetState === "REVIEWED").length,
-      missing: items.filter((r) => r.worksheetState === "MISSING").length
+      missing: items.filter((r) => r.worksheetState === "MISSING").length,
+      onLeave: items.filter((r) => r.worksheetState === "ON_LEAVE").length,
+      onHoliday: items.filter((r) => r.worksheetState === "PUBLIC_HOLIDAY").length
     };
 
     return { date: input.date, items: filtered, counts };

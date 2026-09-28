@@ -210,13 +210,14 @@ async function expectedWorkdays(employeeId: string, from: Date, to: Date) {
 
 async function periodSnapshot(employeeId: string, from: Date, to: Date): Promise<PeriodSnapshot> {
   const { start, end } = inclusiveRange(from, to);
-  const [timesheets, worksheets, leaveRequests, expectedDays] = await Promise.all([
+  const [timesheets, worksheets, leaveRequests, holidayCount, expectedDays] = await Promise.all([
     prisma.timesheet.findMany({ where: { employeeId, workDate: { gte: start, lt: end } } }),
     prisma.worksheet.findMany({ where: { employeeId, workDate: { gte: start, lt: end } }, select: { id: true } }),
     prisma.leaveRequest.findMany({
       where: { employeeId, startDate: { lt: end }, endDate: { gte: start }, status: "APPROVED" },
       select: { numberOfDays: true }
     }),
+    prisma.holidayAssignment.count({ where: { employeeId, workDate: { gte: start, lt: end } } }),
     expectedWorkdays(employeeId, from, to)
   ]);
   const totals = timesheets.reduce(
@@ -236,7 +237,8 @@ async function periodSnapshot(employeeId: string, from: Date, to: Date): Promise
     lateDays: totals.lateDays,
     lateMinutes: totals.lateMinutes,
     missingCheckoutDays: totals.missingCheckoutDays,
-    approvedLeaveDays
+    approvedLeaveDays,
+    holidayDays: holidayCount
   });
   return {
     attendanceDays: timesheets.length,
@@ -1042,7 +1044,8 @@ export const performanceService = {
       if (n.userId) emitToUser(n.userId, "evaluation.opened", { evaluationId: n.relatedEntityId });
     }
     emitToOrgAdmins(organizationId, "evaluation.opened", { cycleId, created: createdIds.length });
-    return this.getCycle(organizationId, cycleId);
+    const opened = await this.getCycle(organizationId, cycleId);
+    return { ...opened, created: createdIds.length };
   },
 
   async closeCycle(organizationId: string, cycleId: string, audit: AuditContext) {

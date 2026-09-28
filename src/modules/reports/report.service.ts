@@ -45,7 +45,7 @@ export const reportService = {
     const employeeWhere = { status: "ACTIVE" as const, ...employeeScope(organizationId, scope, officeId) };
     const timesheetWhere = { employee: employeeScope(organizationId, scope, officeId), workDate: { gte: start, lt: end } };
 
-    const [totalEmployees, timesheets, approvedLeaves, worksheetCount, pendingLeaveCount] = await prisma.$transaction([
+    const [totalEmployees, timesheets, approvedLeaves, holidayAssignments, worksheetCount, pendingLeaveCount] = await prisma.$transaction([
       prisma.employee.count({ where: employeeWhere }),
       prisma.timesheet.findMany({
         where: timesheetWhere,
@@ -63,6 +63,10 @@ export const reportService = {
         where: { status: "APPROVED", startDate: { lte: start }, endDate: { gte: start }, employee: employeeWhere },
         select: { employeeId: true }
       }),
+      prisma.holidayAssignment.findMany({
+        where: { workDate: start, employee: employeeWhere },
+        select: { employeeId: true }
+      }),
       prisma.worksheet.count({
         where: { workDate: { gte: start, lt: end }, employee: employeeScope(organizationId, scope, officeId) }
       }),
@@ -73,12 +77,13 @@ export const reportService = {
 
     const attended = new Set(timesheets.map((x) => x.employeeId));
     const onLeave = new Set(approvedLeaves.map((x) => x.employeeId));
+    const onHoliday = new Set(holidayAssignments.map((x) => x.employeeId));
     const checkedIn = timesheets.filter((x) => x.isOpen && !x.isMissingCheckout).length;
     const checkedOut = timesheets.filter((x) => !x.isOpen && !!x.actualCheckOut).length;
     const late = timesheets.filter((x) => x.isLate).length;
     const missingCheckout = timesheets.filter((x) => x.isMissingCheckout).length;
     const onTime = timesheets.filter((x) => !x.isLate).length;
-    const absentOrNotCheckedIn = Math.max(0, totalEmployees - new Set([...attended, ...onLeave]).size);
+    const absentOrNotCheckedIn = Math.max(0, totalEmployees - new Set([...attended, ...onLeave, ...onHoliday]).size);
 
     return {
       date: start.toISOString().slice(0, 10),
@@ -88,6 +93,7 @@ export const reportService = {
       onTime,
       late,
       onLeave: onLeave.size,
+      onHoliday: onHoliday.size,
       notCheckedIn: absentOrNotCheckedIn,
       missingCheckout,
       worksheetsSubmitted: worksheetCount,

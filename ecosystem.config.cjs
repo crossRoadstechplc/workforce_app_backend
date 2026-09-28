@@ -72,6 +72,21 @@ module.exports = {
       merge_logs: true,
       out_file: "logs/auto-checkouts-out.log",
       error_file: "logs/auto-checkouts-error.log"
+    },
+    {
+      name: "workforce-holiday-auto-apply",
+      script: "dist/src/jobs/holiday-auto-apply.js",
+      cwd: __dirname,
+      exec_mode: "fork",
+      instances: 1,
+      env: { NODE_ENV: "production" },
+      autorestart: false,
+      // Once an hour is enough; applies due holidays for today (and any missed).
+      cron_restart: "5 * * * *",
+      time: true,
+      merge_logs: true,
+      out_file: "logs/holiday-auto-apply-out.log",
+      error_file: "logs/holiday-auto-apply-error.log"
     }
   ]
 };
