@@ -3,7 +3,7 @@ import { prisma } from "../../database/prisma.js";
 import { deliverNotification } from "../notifications/notification.service.js";
 import { emitToUser } from "../../realtime/socket.server.js";
 import { workDateFromKey } from "../../shared/work-date.js";
-import { computeDailySchedule, reminderTargetWindow } from "./attendance-schedule.js";
+import { computeDailySchedule, isReminderDue, reminderDueTargetRange } from "./attendance-schedule.js";
 import { holidayLookup } from "../holidays/holiday.service.js";
 
 type ReminderCounts = { checkInSent: number; checkOutSent: number };
@@ -58,7 +58,7 @@ async function sendReminder(input: {
 }
 
 async function processCheckoutReminders(now: Date): Promise<number> {
-  const { windowStart, windowEnd } = reminderTargetWindow(
+  const { rangeStart, rangeEnd } = reminderDueTargetRange(
     now,
     env.ATTENDANCE_REMINDER_MINUTES,
     env.ATTENDANCE_REMINDER_SLACK_MINUTES
@@ -67,13 +67,23 @@ async function processCheckoutReminders(now: Date): Promise<number> {
     where: {
       isOpen: true,
       actualCheckOut: null,
-      scheduledCheckOut: { gte: windowStart, lte: windowEnd },
+      scheduledCheckOut: { gte: rangeStart, lte: rangeEnd },
       employee: { status: "ACTIVE", user: { status: "ACTIVE" } }
     },
     include: { employee: { select: { id: true, userId: true } } }
   });
   let sent = 0;
   for (const timesheet of candidates) {
+    if (
+      !isReminderDue(
+        timesheet.scheduledCheckOut,
+        now,
+        env.ATTENDANCE_REMINDER_MINUTES,
+        env.ATTENDANCE_REMINDER_SLACK_MINUTES
+      )
+    ) {
+      continue;
+    }
     const existing = await prisma.attendanceReminderLog.findUnique({
       where: {
         employeeId_workDate_kind: {
@@ -120,12 +130,17 @@ async function processCheckInReminders(now: Date): Promise<number> {
     if (!employee.office || !employee.schedule) continue;
     const daily = computeDailySchedule(employee.schedule, employee.office.timezone, now);
     if (!daily) continue;
-    const { windowStart, windowEnd } = reminderTargetWindow(
-      now,
-      env.ATTENDANCE_REMINDER_MINUTES,
-      env.ATTENDANCE_REMINDER_SLACK_MINUTES
-    );
-    if (daily.scheduledIn < windowStart || daily.scheduledIn > windowEnd) continue;
+    // Fkadu-style: due once now >= (scheduledIn - reminderMinutes), with catch-up slack.
+    if (
+      !isReminderDue(
+        daily.scheduledIn,
+        now,
+        env.ATTENDANCE_REMINDER_MINUTES,
+        env.ATTENDANCE_REMINDER_SLACK_MINUTES
+      )
+    ) {
+      continue;
+    }
 
     const workDate = workDateFromKey(daily.workDate);
     const [timesheet, leave, holiday, existing] = await Promise.all([
@@ -177,4 +192,13 @@ export const attendanceReminderService = {
   }
 };
 
-export { reminderTargetWindow, isInReminderWindow, computeDailySchedule, dayRuleForWeekday, scheduledInstant } from "./attendance-schedule.js";
+export {
+  reminderDueAt,
+  reminderDueTargetRange,
+  reminderTargetWindow,
+  isReminderDue,
+  isInReminderWindow,
+  computeDailySchedule,
+  dayRuleForWeekday,
+  scheduledInstant
+} from "./attendance-schedule.js";

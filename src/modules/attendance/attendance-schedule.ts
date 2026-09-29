@@ -42,13 +42,47 @@ export function computeDailySchedule(schedule: ScheduleWithDays, officeTimezone:
   };
 }
 
-export function reminderTargetWindow(now: Date, reminderMinutes: number, slackMinutes: number) {
-  const windowStart = new Date(now.getTime() + (reminderMinutes - slackMinutes) * 60_000);
-  const windowEnd = new Date(now.getTime() + (reminderMinutes + slackMinutes) * 60_000);
-  return { windowStart, windowEnd };
+/** Instant when the reminder becomes due: `scheduledAt - reminderMinutes`. */
+export function reminderDueAt(target: Date, reminderMinutes: number) {
+  return new Date(target.getTime() - reminderMinutes * 60_000);
 }
 
-export function isInReminderWindow(target: Date, now: Date, reminderMinutes: number, slackMinutes: number) {
-  const { windowStart, windowEnd } = reminderTargetWindow(now, reminderMinutes, slackMinutes);
-  return target >= windowStart && target <= windowEnd;
+/**
+ * Scheduled targets that are due for a cron tick (Fkadu-style):
+ * `now >= reminderDueAt` and not later than `maxLatenessMinutes` after that.
+ *
+ * Equivalent range on the scheduled instant:
+ * `now + reminderMinutes - maxLateness` … `now + reminderMinutes`
+ */
+export function reminderDueTargetRange(now: Date, reminderMinutes: number, maxLatenessMinutes: number) {
+  const rangeStart = new Date(now.getTime() + (reminderMinutes - maxLatenessMinutes) * 60_000);
+  const rangeEnd = new Date(now.getTime() + reminderMinutes * 60_000);
+  return { rangeStart, rangeEnd };
+}
+
+/** @deprecated Prefer reminderDueTargetRange — kept for callers still using window names. */
+export function reminderTargetWindow(now: Date, reminderMinutes: number, maxLatenessMinutes: number) {
+  const { rangeStart, rangeEnd } = reminderDueTargetRange(now, reminderMinutes, maxLatenessMinutes);
+  return { windowStart: rangeStart, windowEnd: rangeEnd };
+}
+
+export function isReminderDue(
+  target: Date,
+  now: Date,
+  reminderMinutes: number,
+  maxLatenessMinutes: number
+) {
+  const dueAt = reminderDueAt(target, reminderMinutes).getTime();
+  const t = now.getTime();
+  return t >= dueAt && t <= dueAt + maxLatenessMinutes * 60_000;
+}
+
+/** @deprecated Prefer isReminderDue. */
+export function isInReminderWindow(
+  target: Date,
+  now: Date,
+  reminderMinutes: number,
+  maxLatenessMinutes: number
+) {
+  return isReminderDue(target, now, reminderMinutes, maxLatenessMinutes);
 }

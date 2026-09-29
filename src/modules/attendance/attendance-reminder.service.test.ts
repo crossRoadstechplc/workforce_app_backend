@@ -2,8 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   computeDailySchedule,
   dayRuleForWeekday,
-  isInReminderWindow,
-  reminderTargetWindow,
+  isReminderDue,
+  reminderDueAt,
+  reminderDueTargetRange,
   scheduledInstant,
   type ScheduleWithDays
 } from "./attendance-schedule.js";
@@ -22,26 +23,44 @@ const schedule: ScheduleWithDays = {
   ]
 };
 
-describe("reminderTargetWindow", () => {
-  it("centers the window on reminderMinutes ahead of now", () => {
-    const now = new Date("2026-09-21T08:50:00.000Z");
-    const { windowStart, windowEnd } = reminderTargetWindow(now, 5, 3);
-    expect(windowStart.toISOString()).toBe("2026-09-21T08:52:00.000Z");
-    expect(windowEnd.toISOString()).toBe("2026-09-21T08:58:00.000Z");
+describe("reminderDueAt", () => {
+  it("is reminderMinutes before the scheduled target", () => {
+    const target = new Date("2026-09-21T09:00:00.000Z");
+    expect(reminderDueAt(target, 5).toISOString()).toBe("2026-09-21T08:55:00.000Z");
   });
 });
 
-describe("isInReminderWindow", () => {
-  it("matches a target scheduled five minutes ahead within slack", () => {
-    const now = new Date("2026-09-21T08:54:00.000Z");
-    const target = new Date("2026-09-21T09:00:00.000Z");
-    expect(isInReminderWindow(target, now, 5, 3)).toBe(true);
+describe("reminderDueTargetRange", () => {
+  it("covers due-and-catch-up scheduled targets for a cron tick", () => {
+    const now = new Date("2026-09-21T08:55:00.000Z");
+    // Reminder at T-5; catch-up 15 → targets from now-10 … now+5
+    const { rangeStart, rangeEnd } = reminderDueTargetRange(now, 5, 15);
+    expect(rangeStart.toISOString()).toBe("2026-09-21T08:45:00.000Z");
+    expect(rangeEnd.toISOString()).toBe("2026-09-21T09:00:00.000Z");
+  });
+});
+
+describe("isReminderDue", () => {
+  const target = new Date("2026-09-21T09:00:00.000Z");
+
+  it("sends when now reaches reminderTime (Fkadu-style)", () => {
+    const now = new Date("2026-09-21T08:55:00.000Z");
+    expect(isReminderDue(target, now, 5, 15)).toBe(true);
   });
 
-  it("rejects a target outside the reminder window", () => {
+  it("still sends on a late cron tick within catch-up slack", () => {
+    const now = new Date("2026-09-21T09:05:00.000Z");
+    expect(isReminderDue(target, now, 5, 15)).toBe(true);
+  });
+
+  it("does not send before reminderTime", () => {
     const now = new Date("2026-09-21T08:40:00.000Z");
-    const target = new Date("2026-09-21T09:00:00.000Z");
-    expect(isInReminderWindow(target, now, 5, 3)).toBe(false);
+    expect(isReminderDue(target, now, 5, 15)).toBe(false);
+  });
+
+  it("does not send after catch-up slack expires", () => {
+    const now = new Date("2026-09-21T09:20:00.000Z"); // dueAt 08:55 + 15 = 09:10
+    expect(isReminderDue(target, now, 5, 15)).toBe(false);
   });
 });
 

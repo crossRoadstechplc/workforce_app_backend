@@ -53,7 +53,8 @@ module.exports = {
       instances: 1,
       env: { NODE_ENV: "production" },
       autorestart: false,
-      cron_restart: "*/5 * * * *",
+      // Every 2 minutes; due logic allows up to ATTENDANCE_REMINDER_SLACK_MINUTES catch-up.
+      cron_restart: "*/2 * * * *",
       time: true,
       merge_logs: true,
       out_file: "logs/attendance-reminders-out.log",
