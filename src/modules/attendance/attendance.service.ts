@@ -6,6 +6,7 @@ import { deliverNotification } from "../notifications/notification.service.js";
 import { emitToOfficeDisplay, emitToOrgAdmins, emitToOrgRole, emitToUser } from "../../realtime/socket.server.js";
 import { ROLE } from "../../shared/tenancy.js";
 import { formatWorkDateKey, todayWorkDate, todayWorkDateKey, workDateFromKey } from "../../shared/work-date.js";
+import { formatDurationMinutes } from "../../shared/format-duration.js";
 import { holidayLookup } from "../holidays/holiday.service.js";
 import { closeOpenTimesheet } from "./timesheet-close.js";
 import { canReCheckIn } from "./flexible-day.logic.js";
@@ -446,7 +447,7 @@ export const attendanceService = {
           ...(clock.isLate ? { lateReason: { create: { employeeId: employee.id, reasonType: input.lateReasonType!, reasonDescription: input.lateReasonDescription, submittedAt: now } } } : {})
         }, include: { lateReason: true, locations: true }
       });
-      const notification = await tx.notification.create({ data: { userId, type: clock.isLate ? "CHECK_IN_LATE" : "CHECK_IN_SUCCESS", title: clock.isLate ? "Late check-in recorded" : "Check-in successful", message: clock.isLate ? `You checked in ${clock.lateMinutes} minute(s) late.` : "Your check-in was recorded successfully.", relatedEntityType: "Timesheet", relatedEntityId: timesheet.id } });
+      const notification = await tx.notification.create({ data: { userId, type: clock.isLate ? "CHECK_IN_LATE" : "CHECK_IN_SUCCESS", title: clock.isLate ? "Late check-in recorded" : "Check-in successful", message: clock.isLate ? `You checked in ${formatDurationMinutes(clock.lateMinutes)} late.` : "Your check-in was recorded successfully.", relatedEntityType: "Timesheet", relatedEntityId: timesheet.id } });
       return { timesheet, notification, isReentry: false as const, lateMinutes: clock.lateMinutes };
     });
     await deliverNotification(result.notification);

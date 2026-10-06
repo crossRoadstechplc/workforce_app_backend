@@ -4,6 +4,7 @@ import { AppError } from "../../shared/errors/app-error.js";
 import {
   isEligibleForAutoCheckout,
   resolveAutoCheckoutInstant,
+  resolveSystemCheckoutAt,
   systemAutoCheckoutIdempotencyKey
 } from "./auto-checkout.logic.js";
 import { closeOpenTimesheet } from "./timesheet-close.js";
@@ -39,10 +40,12 @@ export const autoCheckoutService = {
       const autoCheckoutAt = resolveAutoCheckoutInstant(timezone, org.attendanceAutoCheckoutTime, now);
       if (!isEligibleForAutoCheckout(row.actualCheckIn, autoCheckoutAt, now)) continue;
 
+      const checkoutAt = resolveSystemCheckoutAt(row.scheduledCheckOut, autoCheckoutAt);
+
       try {
         await closeOpenTimesheet({
           open: row,
-          checkoutAt: autoCheckoutAt,
+          checkoutAt,
           source: "SYSTEM",
           userId: row.employee.userId,
           organizationId: row.employee.organizationId,

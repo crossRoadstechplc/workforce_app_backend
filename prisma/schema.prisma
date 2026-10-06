@@ -82,6 +82,12 @@ enum LeaveTypeCode {
   OTHER
 }
 
+enum LeaveDaySession {
+  FULL
+  MORNING
+  AFTERNOON
+}
+
 enum AnnualLeaveBucketStatus {
   OPEN
   EXPIRED
@@ -737,18 +743,19 @@ model LeaveType {
 }
 
 model LeaveRequest {
-  id           String          @id @default(uuid()) @db.Uuid
-  employeeId   String          @map("employee_id") @db.Uuid
-  leaveTypeId  String          @map("leave_type_id") @db.Uuid
-  startDate    DateTime        @map("start_date") @db.Date
-  endDate      DateTime        @map("end_date") @db.Date
-  numberOfDays Decimal         @map("number_of_days") @db.Decimal(6, 2)
+  id           String            @id @default(uuid()) @db.Uuid
+  employeeId   String            @map("employee_id") @db.Uuid
+  leaveTypeId  String            @map("leave_type_id") @db.Uuid
+  startDate    DateTime          @map("start_date") @db.Date
+  endDate      DateTime          @map("end_date") @db.Date
+  numberOfDays Decimal           @map("number_of_days") @db.Decimal(6, 2)
   reason       String
-  status       LeaveStatus     @default(PENDING)
-  requestedAt  DateTime        @default(now()) @map("requested_at") @db.Timestamptz(6)
-  updatedAt    DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
-  employee     Employee        @relation(fields: [employeeId], references: [id], onDelete: Restrict)
-  leaveType    LeaveType       @relation(fields: [leaveTypeId], references: [id], onDelete: Restrict)
+  status       LeaveStatus       @default(PENDING)
+  requestedAt  DateTime          @default(now()) @map("requested_at") @db.Timestamptz(6)
+  updatedAt    DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+  employee     Employee          @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  leaveType    LeaveType         @relation(fields: [leaveTypeId], references: [id], onDelete: Restrict)
+  days         LeaveRequestDay[]
   decisions    LeaveDecision[]
   balanceAllocations LeaveBalanceAllocation[]
   annualLeaveLedger  AnnualLeaveLedger[]
@@ -756,6 +763,19 @@ model LeaveRequest {
   @@index([status, requestedAt])
   @@index([startDate, endDate, status])
   @@map("leave_requests")
+}
+
+model LeaveRequestDay {
+  id             String          @id @default(uuid()) @db.Uuid
+  leaveRequestId String          @map("leave_request_id") @db.Uuid
+  date           DateTime        @db.Date
+  session        LeaveDaySession @default(FULL)
+  dayFraction    Decimal         @map("day_fraction") @db.Decimal(6, 2)
+  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  leaveRequest   LeaveRequest    @relation(fields: [leaveRequestId], references: [id], onDelete: Cascade)
+  @@unique([leaveRequestId, date])
+  @@index([date, session])
+  @@map("leave_request_days")
 }
 
 model AnnualLeaveBucket {

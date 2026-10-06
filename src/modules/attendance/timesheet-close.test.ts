@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   computeCheckoutMetrics,
   isEligibleForAutoCheckout,
-  resolveAutoCheckoutInstant
+  resolveAutoCheckoutInstant,
+  resolveSystemCheckoutAt
 } from "./auto-checkout.logic.js";
 import { workDateFromKey } from "../../shared/work-date.js";
 
@@ -22,6 +23,20 @@ describe("isEligibleForAutoCheckout", () => {
     const after = new Date("2026-09-22T19:01:00.000Z");
     expect(isEligibleForAutoCheckout(checkIn, autoAt, before)).toBe(false);
     expect(isEligibleForAutoCheckout(checkIn, autoAt, after)).toBe(true);
+  });
+});
+
+describe("resolveSystemCheckoutAt", () => {
+  it("records scheduled end time instead of the 22:00 auto-close trigger", () => {
+    const scheduledOut = new Date("2026-09-22T14:30:00.000Z"); // 17:30 Addis
+    const autoAt = new Date("2026-09-22T19:00:00.000Z"); // 22:00 Addis
+    expect(resolveSystemCheckoutAt(scheduledOut, autoAt).toISOString()).toBe(scheduledOut.toISOString());
+  });
+
+  it("falls back to auto time when schedule ends after the auto-close trigger", () => {
+    const scheduledOut = new Date("2026-09-22T20:00:00.000Z");
+    const autoAt = new Date("2026-09-22T19:00:00.000Z");
+    expect(resolveSystemCheckoutAt(scheduledOut, autoAt).toISOString()).toBe(autoAt.toISOString());
   });
 });
 

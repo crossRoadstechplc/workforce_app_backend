@@ -137,7 +137,8 @@ export const rosterService = {
           leaveTypeId: true,
           startDate: true,
           endDate: true,
-          leaveType: { select: { id: true, name: true } }
+          leaveType: { select: { id: true, name: true } },
+          days: { where: { date: start }, select: { session: true, dayFraction: true } }
         }
       }),
       prisma.worksheet.findMany({
@@ -178,6 +179,7 @@ export const rosterService = {
               status: timesheet.status,
               actualCheckIn: timesheet.actualCheckIn,
               actualCheckOut: timesheet.actualCheckOut,
+              scheduledCheckOut: timesheet.scheduledCheckOut,
               lateMinutes: timesheet.lateMinutes,
               workedMinutes: timesheet.workedMinutes,
               isOpen: timesheet.isOpen,
@@ -200,10 +202,16 @@ export const rosterService = {
           ? {
               id: leave.id,
               status: "APPROVED" as const,
-              label: "Approved leave",
+              label:
+                leave.days[0]?.session === "MORNING"
+                  ? "Half day · Morning"
+                  : leave.days[0]?.session === "AFTERNOON"
+                    ? "Half day · Afternoon"
+                    : "Approved leave",
               startDate: leave.startDate,
               endDate: leave.endDate,
-              leaveType: leave.leaveType
+              leaveType: leave.leaveType,
+              daySession: leave.days[0]?.session ?? "FULL"
             }
           : null,
         holiday: holiday
@@ -301,7 +309,12 @@ export const rosterService = {
           startDate: { lt: endExclusive },
           endDate: { gte: start }
         },
-        select: { employeeId: true, startDate: true, endDate: true }
+        select: {
+          employeeId: true,
+          startDate: true,
+          endDate: true,
+          days: { select: { date: true, session: true, dayFraction: true } }
+        }
       })
     ]);
 
@@ -341,25 +354,33 @@ export const rosterService = {
         if (!isWorkingDay(e.schedule, weekday)) continue;
         workingDays += 1;
 
-        const onLeave = empLeaves.some((l) => {
+        const matchingLeave = empLeaves.find((l) => {
           const s = DateTime.fromJSDate(l.startDate, { zone: "utc" }).startOf("day");
           const en = DateTime.fromJSDate(l.endDate, { zone: "utc" }).startOf("day");
           return d >= s && d <= en;
         });
-        if (onLeave) {
-          leaveDays += leaveFractionForWeekday(
-            {
-              workingDays: e.schedule?.workingDays ?? [],
-              checkInTime: e.schedule?.checkInTime,
-              checkOutTime: e.schedule?.checkOutTime,
-              days: (e.schedule?.days ?? []).map((day) => ({
-                weekday: day.weekday,
-                checkInTime: day.checkInTime ?? e.schedule?.checkInTime ?? "08:30",
-                checkOutTime: day.checkOutTime ?? e.schedule?.checkOutTime ?? "17:30"
-              }))
-            },
-            weekday
-          );
+        if (matchingLeave) {
+          const dayRow = matchingLeave.days.find((row) => {
+            const rowDate = DateTime.fromJSDate(row.date, { zone: "utc" }).toISODate();
+            return rowDate === key;
+          });
+          if (dayRow) {
+            leaveDays += Number(dayRow.dayFraction);
+          } else {
+            leaveDays += leaveFractionForWeekday(
+              {
+                workingDays: e.schedule?.workingDays ?? [],
+                checkInTime: e.schedule?.checkInTime,
+                checkOutTime: e.schedule?.checkOutTime,
+                days: (e.schedule?.days ?? []).map((day) => ({
+                  weekday: day.weekday,
+                  checkInTime: day.checkInTime ?? e.schedule?.checkInTime ?? "08:30",
+                  checkOutTime: day.checkOutTime ?? e.schedule?.checkOutTime ?? "17:30"
+                }))
+              },
+              weekday
+            );
+          }
           continue;
         }
 
@@ -473,7 +494,10 @@ export const rosterService = {
         startDate: { lt: end },
         endDate: { gte: start }
       },
-      include: { leaveType: { select: { id: true, name: true } } },
+      include: {
+        leaveType: { select: { id: true, name: true } },
+        days: { where: { date: start }, select: { date: true, session: true, dayFraction: true } }
+      },
       orderBy: { requestedAt: "desc" }
     });
 
@@ -490,6 +514,7 @@ export const rosterService = {
     const items = employees.map((e) => {
       const leave = leaveByEmployee.get(e.id) ?? null;
       const leaveState = leave ? (leave.status === "APPROVED" ? "ON_LEAVE" : leave.status) : "NONE";
+      const day = leave?.days[0] ?? null;
       return {
         employee: person(e),
         office: e.office ? { id: e.office.id, name: e.office.name } : null,
@@ -502,7 +527,9 @@ export const rosterService = {
               endDate: leave.endDate,
               numberOfDays: leave.numberOfDays,
               reason: leave.reason,
-              leaveType: leave.leaveType
+              leaveType: leave.leaveType,
+              daySession: day?.session ?? "FULL",
+              dayFraction: day ? Number(day.dayFraction) : null
             }
           : null
       };

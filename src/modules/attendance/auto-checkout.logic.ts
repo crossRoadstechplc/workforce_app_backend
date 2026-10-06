@@ -57,6 +57,17 @@ export function resolveAutoCheckoutInstant(timezone: string, autoCheckoutTime: s
   return scheduledInstant(dayKey, autoCheckoutTime, timezone).toUTC().toJSDate();
 }
 
+/**
+ * Wall-clock auto-close may run at 22:00, but the recorded checkout time should be
+ * the employee's scheduled end ("on time"), not the auto-close trigger time.
+ */
+export function resolveSystemCheckoutAt(scheduledCheckOut: Date, autoCheckoutAt: Date) {
+  if (scheduledCheckOut.getTime() > 0 && scheduledCheckOut.getTime() <= autoCheckoutAt.getTime()) {
+    return scheduledCheckOut;
+  }
+  return autoCheckoutAt;
+}
+
 export function isEligibleForAutoCheckout(actualCheckIn: Date, autoCheckoutAt: Date, now: Date) {
   return now.getTime() >= autoCheckoutAt.getTime() && autoCheckoutAt.getTime() > actualCheckIn.getTime();
 }

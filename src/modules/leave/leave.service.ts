@@ -1,3 +1,4 @@
+import { DateTime } from "luxon";
 import { prisma } from "../../database/prisma.js";
 import { AppError } from "../../shared/errors/app-error.js";
 import { auditJson, type AuditContext } from "../../shared/audit.js";
@@ -5,8 +6,17 @@ import { deliverNotification } from "../notifications/notification.service.js";
 import { emitToOfficeDisplay, emitToOrgAdmins, emitToUser } from "../../realtime/socket.server.js";
 import { assertSameOrganization } from "../../shared/tenancy.js";
 import { assertOfficeInScope, employeeOfficeFilter, type OfficeScope } from "../../shared/office-scope.js";
-import { leaveDaysBetween } from "../../shared/schedule-day-fraction.js";
+import {
+  applyLeaveSessions,
+  leaveSessionsConflict,
+  sumLeaveDayFractions,
+  utcDateKey,
+  workingLeaveDays,
+  type LeaveDaySession
+} from "../../shared/schedule-day-fraction.js";
 import { annualLeaveService } from "./annual-leave.service.js";
+
+const leaveDaysInclude = { orderBy: { date: "asc" as const } };
 
 async function employeeContext(userId: string) {
   const e = await prisma.employee.findUnique({
@@ -35,6 +45,60 @@ async function assertNoAttendanceInRange(employeeId: string, start: Date, end: D
     });
   }
 }
+
+async function assertNoLeaveSessionOverlap(
+  employeeId: string,
+  plannedDays: Array<{ date: Date; session: LeaveDaySession }>
+) {
+  if (!plannedDays.length) return;
+  const start = plannedDays[0]!.date;
+  const end = plannedDays[plannedDays.length - 1]!.date;
+  const existing = await prisma.leaveRequest.findMany({
+    where: {
+      employeeId,
+      status: { in: ["PENDING", "APPROVED"] },
+      startDate: { lte: end },
+      endDate: { gte: start }
+    },
+    include: { days: true }
+  });
+  if (!existing.length) return;
+
+  const occupied = new Map<string, LeaveDaySession[]>();
+  for (const req of existing) {
+    if (req.days.length) {
+      for (const day of req.days) {
+        const key = utcDateKey(day.date);
+        const list = occupied.get(key) ?? [];
+        list.push(day.session);
+        occupied.set(key, list);
+      }
+      continue;
+    }
+    // Legacy requests without day rows occupy the full calendar range as FULL.
+    let cur = DateTime.fromJSDate(req.startDate, { zone: "utc" }).startOf("day");
+    const stop = DateTime.fromJSDate(req.endDate, { zone: "utc" }).startOf("day");
+    while (cur <= stop) {
+      const key = cur.toISODate()!;
+      const list = occupied.get(key) ?? [];
+      list.push("FULL");
+      occupied.set(key, list);
+      cur = cur.plus({ days: 1 });
+    }
+  }
+
+  for (const day of plannedDays) {
+    const key = utcDateKey(day.date);
+    const sessions = occupied.get(key);
+    if (!sessions?.length) continue;
+    if (sessions.some((session) => leaveSessionsConflict(session, day.session))) {
+      throw new AppError(409, "OVERLAPPING_LEAVE", "Leave overlaps an existing pending or approved request", {
+        date: key,
+        session: day.session
+      });
+    }
+  }
+}
 async function orgAdminUserIds(organizationId: string) {
   const users = await prisma.user.findMany({
     where: {
@@ -50,7 +114,16 @@ export const leaveService = {
   async types(organizationId: string) {
     return prisma.leaveType.findMany({ where: { organizationId, isActive: true }, orderBy: { name: "asc" } });
   },
-  async create(userId: string, input: { leaveTypeId: string; startDate: Date; endDate: Date; reason: string }) {
+  async create(
+    userId: string,
+    input: {
+      leaveTypeId: string;
+      startDate: Date;
+      endDate: Date;
+      reason: string;
+      days?: Array<{ date: Date; session: LeaveDaySession }>;
+    }
+  ) {
     const e = await employeeContext(userId);
     const type = await prisma.leaveType.findUnique({ where: { id: input.leaveTypeId } });
     if (!type?.isActive || type.organizationId !== e.organizationId) {
@@ -59,18 +132,30 @@ export const leaveService = {
     const zone = e.office?.timezone ?? e.schedule!.timezone;
     const { s, e: ed } = dateBounds(input.startDate, input.endDate);
     if (ed < s) throw new AppError(422, "INVALID_LEAVE_RANGE", "End date cannot be before start date");
-    const numberOfDays = leaveDaysBetween(s, ed, zone, e.schedule!);
+    const plannedDays = applyLeaveSessions(workingLeaveDays(s, ed, zone, e.schedule!), input.days);
+    const numberOfDays = sumLeaveDayFractions(plannedDays);
     if (numberOfDays <= 0) throw new AppError(422, "NO_WORKING_DAYS", "Selected leave range contains no scheduled working days");
     await assertNoAttendanceInRange(e.id, s, ed);
-    const overlap = await prisma.leaveRequest.findFirst({
-      where: { employeeId: e.id, status: { in: ["PENDING", "APPROVED"] }, startDate: { lte: ed }, endDate: { gte: s } }
-    });
-    if (overlap) throw new AppError(409, "OVERLAPPING_LEAVE", "Leave overlaps an existing pending or approved request");
+    await assertNoLeaveSessionOverlap(e.id, plannedDays);
     const admins = await orgAdminUserIds(e.organizationId);
     const result = await prisma.$transaction(async (tx) => {
       const request = await tx.leaveRequest.create({
-        data: { employeeId: e.id, leaveTypeId: input.leaveTypeId, startDate: s, endDate: ed, numberOfDays, reason: input.reason },
-        include: { leaveType: true }
+        data: {
+          employeeId: e.id,
+          leaveTypeId: input.leaveTypeId,
+          startDate: s,
+          endDate: ed,
+          numberOfDays,
+          reason: input.reason,
+          days: {
+            create: plannedDays.map((day) => ({
+              date: day.date,
+              session: day.session,
+              dayFraction: day.dayFraction
+            }))
+          }
+        },
+        include: { leaveType: true, days: leaveDaysInclude }
       });
       if (type.tracksBalance) {
         await annualLeaveService.reserve(tx, { employeeId: e.id, leaveRequestId: request.id, days: numberOfDays });
@@ -107,7 +192,7 @@ export const leaveService = {
     const [items, total] = await prisma.$transaction([
       prisma.leaveRequest.findMany({
         where,
-        include: { leaveType: true, decisions: { orderBy: { decidedAt: "desc" } } },
+        include: { leaveType: true, days: leaveDaysInclude, decisions: { orderBy: { decidedAt: "desc" } } },
         orderBy: { requestedAt: "desc" },
         skip,
         take: input.pageSize
@@ -120,7 +205,7 @@ export const leaveService = {
     const e = await employeeContext(userId);
     const item = await prisma.leaveRequest.findFirst({
       where: { id, employeeId: e.id },
-      include: { leaveType: true, decisions: { orderBy: { decidedAt: "desc" } } }
+      include: { leaveType: true, days: leaveDaysInclude, decisions: { orderBy: { decidedAt: "desc" } } }
     });
     if (!item) throw new AppError(404, "LEAVE_NOT_FOUND", "Leave request not found");
     return item;
@@ -193,6 +278,7 @@ export const leaveService = {
         where,
         include: {
           leaveType: true,
+          days: leaveDaysInclude,
           employee: {
             select: {
               id: true,
@@ -254,6 +340,7 @@ export const leaveService = {
       where: { id },
       include: {
         leaveType: true,
+        days: leaveDaysInclude,
         employee: { include: { user: true, schedule: true, office: true } },
         decisions: { include: { admin: { select: { id: true, email: true } } }, orderBy: { decidedAt: "desc" } },
         balanceAllocations: { include: { bucket: { select: { id: true, periodStart: true, periodEnd: true } } } }

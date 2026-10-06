@@ -18,6 +18,7 @@
     "db:seed": "tsx prisma/seed.ts",
     "db:seed:admin": "tsx prisma/seed-admin.ts",
     "db:seed:admin:prod": "node dist/prisma/seed-admin.js",
+    "db:seed:subscriptions": "tsx prisma/seed-subscriptions.ts",
     "db:wipe-keep-admin": "tsx prisma/wipe-keep-admin.ts",
     "job:missing-checkouts": "tsx src/jobs/missing-checkouts.ts",
     "job:attendance-reminders": "tsx src/jobs/attendance-reminders.ts",

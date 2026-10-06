@@ -324,7 +324,7 @@ export const holidayService = {
     scope: OfficeScope
   ) {
     const year = input.year ?? currentEthiopianYear();
-    const filter = input.filter ?? "public";
+    const filter = input.filter ?? "all";
     const includeKenat = filter !== "custom";
     const includeCustom = filter === "custom" || filter === "all";
 

@@ -1,6 +1,24 @@
 import { z } from "zod";
+
 const page = { page: z.coerce.number().int().min(1).default(1), pageSize: z.coerce.number().int().min(1).max(100).default(20) };
-export const createLeaveSchema = z.object({ body: z.object({ leaveTypeId: z.string().uuid(), startDate: z.coerce.date(), endDate: z.coerce.date(), reason: z.string().trim().min(5).max(2000) }) });
+
+const leaveDaySession = z.enum(["FULL", "MORNING", "AFTERNOON"]);
+
+const leaveDayInput = z.object({
+  date: z.coerce.date(),
+  session: leaveDaySession.default("FULL")
+});
+
+export const createLeaveSchema = z.object({
+  body: z.object({
+    leaveTypeId: z.string().uuid(),
+    startDate: z.coerce.date(),
+    endDate: z.coerce.date(),
+    reason: z.string().trim().min(5).max(2000),
+    days: z.array(leaveDayInput).max(366).optional()
+  })
+});
+
 export const listMyLeaveSchema = z.object({ query: z.object({ ...page, status: z.enum(["PENDING","APPROVED","REJECTED","CANCELLED"]).optional() }) });
 export const leaveIdSchema = z.object({ params: z.object({ id: z.string().uuid() }) });
 export const adminLeaveListSchema = z.object({
