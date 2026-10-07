@@ -124,6 +124,20 @@ export const createCycleSchema = z.object({
     .refine((v) => v.periodEnd >= v.periodStart, { message: "periodEnd must be on or after periodStart", path: ["periodEnd"] })
 });
 
+export const updateCycleSchema = z.object({
+  params: z.object({ id: uuid }),
+  body: z
+    .object({
+      name: z.string().trim().min(2).max(200),
+      periodStart: dateString,
+      periodEnd: dateString,
+      selfDueAt: z.coerce.date().optional().nullable(),
+      evaluatorDueAt: z.coerce.date().optional().nullable(),
+      numberPrefix: z.string().trim().max(40).optional().nullable()
+    })
+    .refine((v) => v.periodEnd >= v.periodStart, { message: "periodEnd must be on or after periodStart", path: ["periodEnd"] })
+});
+
 export const listCyclesSchema = z.object({
   query: z.object({
     ...page,

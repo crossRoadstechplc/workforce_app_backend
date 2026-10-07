@@ -889,6 +889,64 @@ export const performanceService = {
     return { ...cycle, periodStart: dateKey(cycle.periodStart), periodEnd: dateKey(cycle.periodEnd) };
   },
 
+  async updateCycle(
+    organizationId: string,
+    cycleId: string,
+    input: {
+      name: string;
+      periodStart: Date;
+      periodEnd: Date;
+      selfDueAt?: Date | null;
+      evaluatorDueAt?: Date | null;
+      numberPrefix?: string | null;
+    },
+    audit: AuditContext
+  ) {
+    const cycle = await prisma.evaluationCycle.findFirst({ where: { id: cycleId, organizationId } });
+    if (!cycle) throw new AppError(404, "CYCLE_NOT_FOUND", "Evaluation cycle not found");
+    if (cycle.status !== "DRAFT") {
+      throw new AppError(409, "CYCLE_NOT_DRAFT", "Only draft cycles can be edited");
+    }
+    const updated = await prisma.evaluationCycle.update({
+      where: { id: cycleId },
+      data: {
+        name: input.name,
+        periodStart: input.periodStart,
+        periodEnd: input.periodEnd,
+        selfDueAt: input.selfDueAt ?? null,
+        evaluatorDueAt: input.evaluatorDueAt ?? null,
+        numberPrefix: input.numberPrefix ?? cycleNumberPrefix(input.periodEnd, input.numberPrefix)
+      }
+    });
+    await prisma.auditLog.create({
+      data: {
+        actorUserId: audit.actorUserId,
+        action: "EVALUATION_CYCLE_UPDATED",
+        entityType: "EvaluationCycle",
+        entityId: cycleId,
+        oldValues: auditJson({
+          name: cycle.name,
+          periodStart: dateKey(cycle.periodStart),
+          periodEnd: dateKey(cycle.periodEnd),
+          selfDueAt: cycle.selfDueAt,
+          evaluatorDueAt: cycle.evaluatorDueAt,
+          numberPrefix: cycle.numberPrefix
+        }),
+        newValues: auditJson({
+          name: updated.name,
+          periodStart: dateKey(updated.periodStart),
+          periodEnd: dateKey(updated.periodEnd),
+          selfDueAt: updated.selfDueAt,
+          evaluatorDueAt: updated.evaluatorDueAt,
+          numberPrefix: updated.numberPrefix
+        }),
+        ipAddress: audit.ipAddress,
+        userAgent: audit.userAgent
+      }
+    });
+    return { ...updated, periodStart: dateKey(updated.periodStart), periodEnd: dateKey(updated.periodEnd) };
+  },
+
   async createCycle(
     organizationId: string,
     userId: string,

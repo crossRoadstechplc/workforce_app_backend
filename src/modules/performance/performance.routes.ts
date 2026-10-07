@@ -21,6 +21,7 @@ import {
   saveMyEvaluation,
   submitAdminEvaluation,
   submitMyEvaluation,
+  updateCycle,
   updateTemplate
 } from "./performance.controller.js";
 import {
@@ -37,6 +38,7 @@ import {
   listMyEvaluationsSchema,
   openCycleSchema,
   templateIdSchema,
+  updateCycleSchema,
   updateTemplateSchema
 } from "./performance.schemas.js";
 
@@ -56,6 +58,7 @@ adminEvaluationRouter.patch("/templates/:id", requireOrgAdmin, requirePermission
 adminEvaluationRouter.get("/cycles", requirePermission("evaluation.view_office"), validate(listCyclesSchema), adminCycles);
 adminEvaluationRouter.get("/cycles/:id", requirePermission("evaluation.view_office"), validate(cycleIdSchema), adminCycle);
 adminEvaluationRouter.post("/cycles", requireOrgAdmin, requirePermission("evaluation.cycle.manage"), validate(createCycleSchema), createCycle);
+adminEvaluationRouter.patch("/cycles/:id", requireOrgAdmin, requirePermission("evaluation.cycle.manage"), validate(updateCycleSchema), updateCycle);
 adminEvaluationRouter.post("/cycles/:id/open", requireOrgAdmin, requirePermission("evaluation.cycle.manage"), validate(openCycleSchema), openCycle);
 adminEvaluationRouter.post("/cycles/:id/close", requireOrgAdmin, requirePermission("evaluation.cycle.manage"), validate(cycleIdSchema), closeCycle);
 adminEvaluationRouter.delete("/cycles/:id", requireOrgAdmin, requirePermission("evaluation.cycle.manage"), validate(cycleIdSchema), deleteCycle);

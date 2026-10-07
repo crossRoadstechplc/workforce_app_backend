@@ -5,9 +5,9 @@ import { AppError } from "../../shared/errors/app-error.js";
 import { auditJson, type AuditContext } from "../../shared/audit.js";
 import { deliverNotification } from "../notifications/notification.service.js";
 import { emitToOrgAdmins, emitToUser } from "../../realtime/socket.server.js";
-import { ROLE } from "../../shared/tenancy.js";
 import { assertOfficeInScope, employeeOfficeFilter, type OfficeScope } from "../../shared/office-scope.js";
 import { formatWorkDateKey, workDateFromKey } from "../../shared/work-date.js";
+import { leaveSessionsConflict, type LeaveDaySession } from "../../shared/schedule-day-fraction.js";
 import { holidayLookup } from "../holidays/holiday.service.js";
 
 type ScheduleInfo = {
@@ -19,6 +19,8 @@ type ScheduleInfo = {
   workingDays: number[];
   days: { weekday: number; checkInTime: string; checkOutTime: string }[];
 };
+
+type DayInput = { date: string; session: LeaveDaySession };
 
 async function employeeContext(userId: string) {
   const employee = await prisma.employee.findUnique({
@@ -66,6 +68,46 @@ function scheduleBounds(workDateKey: string, schedule: ScheduleInfo, officeTimez
   };
 }
 
+function sessionActuals(scheduledIn: Date, scheduledOut: Date, session: LeaveDaySession) {
+  const startMs = scheduledIn.getTime();
+  const endMs = scheduledOut.getTime();
+  const midMs = startMs + Math.floor((endMs - startMs) / 2);
+  const mid = new Date(midMs);
+  if (session === "MORNING") {
+    return {
+      checkIn: scheduledIn,
+      checkOut: mid,
+      workedMinutes: Math.max(0, Math.floor((midMs - startMs) / 60000))
+    };
+  }
+  if (session === "AFTERNOON") {
+    return {
+      checkIn: mid,
+      checkOut: scheduledOut,
+      workedMinutes: Math.max(0, Math.floor((endMs - midMs) / 60000))
+    };
+  }
+  return {
+    checkIn: scheduledIn,
+    checkOut: scheduledOut,
+    workedMinutes: Math.max(0, Math.floor((endMs - startMs) / 60000))
+  };
+}
+
+function normalizeDayInputs(input: { dates?: string[]; days?: DayInput[] }): DayInput[] {
+  if (input.days?.length) {
+    const map = new Map<string, LeaveDaySession>();
+    for (const day of input.days) {
+      map.set(`${day.date}:${day.session}`, day.session);
+    }
+    return [...map.entries()]
+      .map(([key, session]) => ({ date: key.split(":")[0]!, session }))
+      .sort((a, b) => a.date.localeCompare(b.date) || a.session.localeCompare(b.session));
+  }
+  const dates = [...new Set(input.dates ?? [])].sort();
+  return dates.map((date) => ({ date, session: "FULL" as const }));
+}
+
 async function orgAdminUserIds(organizationId: string) {
   const users = await prisma.user.findMany({
     where: {
@@ -83,6 +125,7 @@ async function orgAdminUserIds(organizationId: string) {
 function serializeRequest(row: {
   id: string;
   workDate: Date;
+  session?: LeaveDaySession | string | null;
   status: string;
   employeeNote: string | null;
   adminNote: string | null;
@@ -94,6 +137,7 @@ function serializeRequest(row: {
   return {
     id: row.id,
     workDate: formatWorkDateKey(row.workDate),
+    session: (row.session as LeaveDaySession) ?? "FULL",
     status: row.status,
     employeeNote: row.employeeNote,
     adminNote: row.adminNote,
@@ -111,24 +155,43 @@ function serializeRequest(row: {
   };
 }
 
-async function applyScheduledCorrectness(timesheetId: string, audit: AuditContext) {
+async function leaveSessionsForDate(employeeId: string, workDate: Date): Promise<LeaveDaySession[]> {
+  const leaves = await prisma.leaveRequest.findMany({
+    where: {
+      employeeId,
+      status: { in: ["PENDING", "APPROVED"] },
+      startDate: { lte: workDate },
+      endDate: { gte: workDate }
+    },
+    include: { days: { where: { date: workDate }, select: { session: true } } }
+  });
+  const sessions: LeaveDaySession[] = [];
+  for (const leave of leaves) {
+    if (leave.days.length) {
+      for (const day of leave.days) sessions.push(day.session);
+    } else {
+      sessions.push("FULL");
+    }
+  }
+  return sessions;
+}
+
+async function applyScheduledCorrectness(timesheetId: string, session: LeaveDaySession, audit: AuditContext) {
   const current = await prisma.timesheet.findUnique({
     where: { id: timesheetId },
     include: { employee: { select: { userId: true } } }
   });
   if (!current) throw new AppError(404, "TIMESHEET_NOT_FOUND", "Timesheet not found");
 
-  const checkIn = current.scheduledCheckIn;
-  const checkOut = current.scheduledCheckOut;
-  const workedMinutes = Math.max(0, Math.floor((checkOut.getTime() - checkIn.getTime()) / 60000));
+  const actuals = sessionActuals(current.scheduledCheckIn, current.scheduledCheckOut, session);
 
   const updated = await prisma.timesheet.update({
     where: { id: timesheetId },
     data: {
-      actualCheckIn: checkIn,
-      actualCheckOut: checkOut,
+      actualCheckIn: actuals.checkIn,
+      actualCheckOut: actuals.checkOut,
       lateMinutes: 0,
-      workedMinutes,
+      workedMinutes: actuals.workedMinutes,
       earlyCheckoutMinutes: 0,
       overtimeMinutes: 0,
       isLate: false,
@@ -143,7 +206,7 @@ async function applyScheduledCorrectness(timesheetId: string, audit: AuditContex
     data: {
       timesheetId,
       actorUserId: audit.actorUserId,
-      reason: "Attendance correctness approved",
+      reason: `Attendance correctness approved (${session})`,
       previousValues: auditJson(current)!,
       correctedValues: auditJson(updated)!
     }
@@ -155,6 +218,7 @@ async function applyScheduledCorrectness(timesheetId: string, audit: AuditContex
 async function createScheduledTimesheet(
   employee: Awaited<ReturnType<typeof employeeContext>>,
   workDateKey: string,
+  session: LeaveDaySession,
   audit: AuditContext
 ) {
   const bounds = scheduleBounds(workDateKey, employee.schedule!, employee.office!.timezone || employee.schedule!.timezone);
@@ -164,8 +228,9 @@ async function createScheduledTimesheet(
   const existing = await prisma.timesheet.findUnique({
     where: { employeeId_workDate: { employeeId: employee.id, workDate } }
   });
-  if (existing) return applyScheduledCorrectness(existing.id, audit);
+  if (existing) return applyScheduledCorrectness(existing.id, session, audit);
 
+  const actuals = sessionActuals(bounds.scheduledIn, bounds.scheduledOut, session);
   const office = employee.office!;
   const created = await prisma.timesheet.create({
     data: {
@@ -175,10 +240,10 @@ async function createScheduledTimesheet(
       workDate,
       scheduledCheckIn: bounds.scheduledIn,
       scheduledCheckOut: bounds.scheduledOut,
-      actualCheckIn: bounds.scheduledIn,
-      actualCheckOut: bounds.scheduledOut,
+      actualCheckIn: actuals.checkIn,
+      actualCheckOut: actuals.checkOut,
       lateMinutes: 0,
-      workedMinutes: bounds.workedMinutes,
+      workedMinutes: actuals.workedMinutes,
       earlyCheckoutMinutes: 0,
       overtimeMinutes: 0,
       isLate: false,
@@ -203,7 +268,7 @@ async function createScheduledTimesheet(
     data: {
       timesheetId: created.id,
       actorUserId: audit.actorUserId,
-      reason: "Attendance correctness approved (created from schedule)",
+      reason: `Attendance correctness approved (created from schedule, ${session})`,
       previousValues: {},
       correctedValues: auditJson(created)!
     }
@@ -213,46 +278,49 @@ async function createScheduledTimesheet(
 }
 
 export const attendanceCorrectnessService = {
-  async createRequests(userId: string, input: { dates: string[]; note?: string }) {
+  async createRequests(userId: string, input: { dates?: string[]; days?: DayInput[]; note?: string }) {
     const employee = await employeeContext(userId);
-    const uniqueDates = [...new Set(input.dates)].sort();
-    if (!uniqueDates.length) throw new AppError(422, "DATES_REQUIRED", "Select at least one date");
+    const dayInputs = normalizeDayInputs(input);
+    if (!dayInputs.length) throw new AppError(422, "DATES_REQUIRED", "Select at least one date");
 
     const zone = employee.office!.timezone || employee.schedule!.timezone;
     const todayKey = DateTime.now().setZone(zone).toISODate()!;
 
     const created = [];
-    for (const workDateKey of uniqueDates) {
+    for (const day of dayInputs) {
+      const workDateKey = day.date;
+      const session = day.session;
       if (workDateKey >= todayKey) throw new AppError(422, "FUTURE_DATE_NOT_ALLOWED", "Correctness can only be requested for past dates");
       const bounds = scheduleBounds(workDateKey, employee.schedule!, zone);
       if (!bounds) throw new AppError(422, "NOT_A_WORKING_DAY", `${workDateKey} is not a working day`);
 
       const workDate = workDateFromKey(workDateKey);
-      const onLeave = await prisma.leaveRequest.findFirst({
-        where: {
-          employeeId: employee.id,
-          status: "APPROVED",
-          startDate: { lte: workDate },
-          endDate: { gte: workDate }
-        },
-        select: { id: true }
-      });
-      if (onLeave) throw new AppError(409, "ON_LEAVE", `You were on leave on ${workDateKey}`);
+      const leaveSessions = await leaveSessionsForDate(employee.id, workDate);
+      if (leaveSessions.some((leaveSession) => leaveSessionsConflict(leaveSession, session))) {
+        throw new AppError(409, "ON_LEAVE", `You were on leave on ${workDateKey} for this part of the day`);
+      }
 
       const onHoliday = await holidayLookup.forEmployee(employee.id, workDateKey);
       if (onHoliday) {
         throw new AppError(409, "ON_PUBLIC_HOLIDAY", `${workDateKey} was a public holiday (${onHoliday.nameEn})`);
       }
 
-      const pending = await prisma.attendanceCorrectnessRequest.findFirst({
-        where: { employeeId: employee.id, workDate, status: "PENDING" }
+      const existingActive = await prisma.attendanceCorrectnessRequest.findMany({
+        where: {
+          employeeId: employee.id,
+          workDate,
+          status: { in: ["PENDING", "APPROVED"] }
+        },
+        select: { id: true, status: true, session: true }
       });
-      if (pending) throw new AppError(409, "REQUEST_ALREADY_PENDING", `A pending request already exists for ${workDateKey}`);
-
-      const approved = await prisma.attendanceCorrectnessRequest.findFirst({
-        where: { employeeId: employee.id, workDate, status: "APPROVED" }
-      });
-      if (approved) throw new AppError(409, "ALREADY_APPROVED", `Correctness was already approved for ${workDateKey}`);
+      for (const row of existingActive) {
+        const existingSession = (row.session as LeaveDaySession) ?? "FULL";
+        if (!leaveSessionsConflict(existingSession, session)) continue;
+        if (row.status === "PENDING") {
+          throw new AppError(409, "REQUEST_ALREADY_PENDING", `A pending request already exists for ${workDateKey}`);
+        }
+        throw new AppError(409, "ALREADY_APPROVED", `Correctness was already approved for ${workDateKey}`);
+      }
 
       const timesheet = await prisma.timesheet.findUnique({
         where: { employeeId_workDate: { employeeId: employee.id, workDate } }
@@ -263,6 +331,7 @@ export const attendanceCorrectnessService = {
           organizationId: employee.organizationId,
           employeeId: employee.id,
           workDate,
+          session,
           timesheetId: timesheet?.id ?? null,
           employeeNote: input.note?.trim() || null
         },
@@ -273,13 +342,15 @@ export const attendanceCorrectnessService = {
 
     const admins = await orgAdminUserIds(employee.organizationId);
     for (const row of created) {
+      const sessionLabel =
+        row.session === "MORNING" ? "half day morning" : row.session === "AFTERNOON" ? "half day afternoon" : "full day";
       for (const adminId of admins) {
         const n = await prisma.notification.create({
           data: {
             userId: adminId,
             type: "ATTENDANCE_CORRECTNESS_SUBMITTED",
             title: "Attendance correctness request",
-            message: `${employee.firstName} ${employee.lastName} requested attendance correction for ${formatWorkDateKey(row.workDate)}.`,
+            message: `${employee.firstName} ${employee.lastName} requested attendance correction for ${formatWorkDateKey(row.workDate)} (${sessionLabel}).`,
             relatedEntityType: "AttendanceCorrectnessRequest",
             relatedEntityId: row.id
           }
@@ -289,7 +360,8 @@ export const attendanceCorrectnessService = {
       emitToOrgAdmins(employee.organizationId, "attendance.correctness_requested", {
         requestId: row.id,
         employeeId: employee.id,
-        workDate: formatWorkDateKey(row.workDate)
+        workDate: formatWorkDateKey(row.workDate),
+        session: row.session
       });
     }
 
@@ -370,11 +442,17 @@ export const attendanceCorrectnessService = {
     assertOfficeInScope(scope, request.employee.officeId, "You do not manage this office");
     if (request.status !== "PENDING") throw new AppError(409, "REQUEST_NOT_PENDING", "Only pending requests can be approved");
 
+    const session = (request.session as LeaveDaySession) ?? "FULL";
     let timesheetResult;
     if (request.timesheetId) {
-      timesheetResult = await applyScheduledCorrectness(request.timesheetId, audit);
+      timesheetResult = await applyScheduledCorrectness(request.timesheetId, session, audit);
     } else {
-      timesheetResult = await createScheduledTimesheet(request.employee as Awaited<ReturnType<typeof employeeContext>>, formatWorkDateKey(request.workDate), audit);
+      timesheetResult = await createScheduledTimesheet(
+        request.employee as Awaited<ReturnType<typeof employeeContext>>,
+        formatWorkDateKey(request.workDate),
+        session,
+        audit
+      );
     }
 
     const updated = await prisma.attendanceCorrectnessRequest.update({
@@ -389,19 +467,20 @@ export const attendanceCorrectnessService = {
       include: { employee: { include: { office: { select: { id: true, name: true } } } } }
     });
 
+    const sessionLabel = session === "MORNING" ? " (half day morning)" : session === "AFTERNOON" ? " (half day afternoon)" : "";
     const n = await prisma.notification.create({
       data: {
         userId: request.employee.userId,
         type: "ATTENDANCE_CORRECTNESS_APPROVED",
         title: "Attendance corrected",
-        message: `Your attendance for ${formatWorkDateKey(request.workDate)} was approved.`,
+        message: `Your attendance for ${formatWorkDateKey(request.workDate)}${sessionLabel} was approved.`,
         relatedEntityType: "AttendanceCorrectnessRequest",
         relatedEntityId: id
       }
     });
     await deliverNotification(n);
-    emitToUser(request.employee.userId, "attendance.correctness_decided", { requestId: id, status: "APPROVED" });
-    emitToOrgAdmins(organizationId, "attendance.correctness_decided", { requestId: id, status: "APPROVED" });
+    emitToUser(request.employee.userId, "attendance.correctness_decided", { requestId: id, status: "APPROVED", session });
+    emitToOrgAdmins(organizationId, "attendance.correctness_decided", { requestId: id, status: "APPROVED", session });
     emitToOrgAdmins(organizationId, "attendance.corrected", { timesheetId: timesheetResult.updated.id, employeeId: request.employeeId });
 
     return serializeRequest(updated);

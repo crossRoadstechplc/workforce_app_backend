@@ -10,6 +10,20 @@ type CheckOutInput = LocationInput & { idempotencyKey: string; workDescription: 
 
 type GeoResult = { distance_meters: number; inside_radius: boolean };
 
+/** Human duration from minutes: 45m, 5h 30m, 1d 2h. */
+function formatLateDuration(totalMinutes: number): string {
+  const total = Math.max(0, Math.round(Math.abs(totalMinutes)));
+  if (total === 0) return "0m";
+  const days = Math.floor(total / 1440);
+  const hours = Math.floor((total % 1440) / 60);
+  const minutes = total % 60;
+  const parts: string[] = [];
+  if (days > 0) parts.push(`${days}d`);
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0 || parts.length === 0) parts.push(`${minutes}m`);
+  return parts.join(" ");
+}
+
 function scheduledInstant(workDate: string, hhmm: string, timezone: string) {
   const dt = DateTime.fromISO(`${workDate}T${hhmm}:00`, { zone: timezone });
   if (!dt.isValid) throw new AppError(500, "INVALID_SCHEDULE_TIME", "Configured schedule time or timezone is invalid");
@@ -115,7 +129,7 @@ export const attendanceService = {
           ...(clock.isLate ? { lateReason: { create: { employeeId: employee.id, reasonType: input.lateReasonType!, reasonDescription: input.lateReasonDescription, submittedAt: now } } } : {})
         }, include: { lateReason: true, locations: true }
       });
-      const notification = await tx.notification.create({ data: { userId, type: clock.isLate ? "CHECK_IN_LATE" : "CHECK_IN_SUCCESS", title: clock.isLate ? "Late check-in recorded" : "Check-in successful", message: clock.isLate ? `You checked in ${clock.lateMinutes} minute(s) late.` : "Your check-in was recorded successfully.", relatedEntityType: "Timesheet", relatedEntityId: timesheet.id } });
+      const notification = await tx.notification.create({ data: { userId, type: clock.isLate ? "CHECK_IN_LATE" : "CHECK_IN_SUCCESS", title: clock.isLate ? "Late check-in recorded" : "Check-in successful", message: clock.isLate ? `You checked in ${formatLateDuration(clock.lateMinutes)} late.` : "Your check-in was recorded successfully.", relatedEntityType: "Timesheet", relatedEntityId: timesheet.id } });
       return { timesheet, notification };
     });
     await deliverNotification(result.notification);
@@ -154,7 +168,7 @@ export const attendanceService = {
           worksheet: { create: { employeeId: employee.id, workDate: open.workDate, workDescription: input.workDescription, submittedAt: now } }
         }, include: { worksheet: true, lateReason: true, locations: true }
       });
-      const notification = await tx.notification.create({ data: { userId, type: "CHECK_OUT_SUCCESS", title: "Checkout successful", message: `You checked out successfully. Worked time: ${workedMinutes} minutes.`, relatedEntityType: "Timesheet", relatedEntityId: timesheet.id } });
+      const notification = await tx.notification.create({ data: { userId, type: "CHECK_OUT_SUCCESS", title: "Checkout successful", message: `You checked out successfully. Worked time: ${formatLateDuration(workedMinutes)}.`, relatedEntityType: "Timesheet", relatedEntityId: timesheet.id } });
       return { timesheet, notification };
     });
     await deliverNotification(result.notification);

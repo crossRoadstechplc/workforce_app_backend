@@ -1,12 +1,26 @@
 import { z } from "zod";
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Expected YYYY-MM-DD");
+const daySession = z.enum(["FULL", "MORNING", "AFTERNOON"]);
+
+const dayInput = z.object({
+  date: isoDate,
+  session: daySession.default("FULL")
+});
 
 export const createCorrectnessRequestsSchema = z.object({
-  body: z.object({
-    dates: z.array(isoDate).min(1).max(31),
-    note: z.string().trim().max(1000).optional()
-  })
+  body: z
+    .object({
+      /** @deprecated Prefer `days` with per-date session. */
+      dates: z.array(isoDate).min(1).max(31).optional(),
+      days: z.array(dayInput).min(1).max(31).optional(),
+      note: z.string().trim().max(1000).optional()
+    })
+    .superRefine((body, ctx) => {
+      if (!body.days?.length && !body.dates?.length) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Select at least one date", path: ["days"] });
+      }
+    })
 });
 
 export const myCorrectnessRequestsSchema = z.object({

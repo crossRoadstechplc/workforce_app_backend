@@ -143,6 +143,21 @@ export const createCycle: RequestHandler = async (req, res, next) => {
   }
 };
 
+export const updateCycle: RequestHandler = async (req, res, next) => {
+  try {
+    res.json({
+      data: await performanceService.updateCycle(
+        requireOrganizationId(req.auth),
+        paramId(req.params.id!),
+        req.body,
+        auditContextFromRequest(req)
+      )
+    });
+  } catch (e) {
+    next(e);
+  }
+};
+
 export const openCycle: RequestHandler = async (req, res, next) => {
   try {
     const scope = getOfficeScope(req.auth);

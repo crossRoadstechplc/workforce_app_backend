@@ -707,6 +707,7 @@ model AttendanceCorrectnessRequest {
   organizationId   String                       @map("organization_id") @db.Uuid
   employeeId       String                       @map("employee_id") @db.Uuid
   workDate         DateTime                     @map("work_date") @db.Date
+  session          LeaveDaySession              @default(FULL)
   timesheetId      String?                      @map("timesheet_id") @db.Uuid
   status           AttendanceCorrectnessStatus  @default(PENDING)
   employeeNote     String?                      @map("employee_note")
@@ -720,7 +721,7 @@ model AttendanceCorrectnessRequest {
   timesheet        Timesheet?                   @relation(fields: [timesheetId], references: [id], onDelete: SetNull)
   reviewedBy       User?                        @relation("CorrectnessReviewer", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
   @@index([organizationId, workDate, status])
-  @@index([employeeId, workDate])
+  @@index([employeeId, workDate, session])
   @@index([employeeId, status])
   @@map("attendance_correctness_requests")
 }
