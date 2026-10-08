@@ -130,6 +130,7 @@ enum NotificationType {
   MEETING_CANCELLED
   CHAT_MESSAGE
   HOLIDAY_ANNOUNCED
+  BIRTHDAY_WISH
 }
 
 enum HolidaySource {
@@ -491,6 +492,7 @@ model Employee {
   phone                 String?
   jobTitle              String?             @map("job_title")
   employmentStartDate   DateTime            @map("employment_start_date") @db.Date
+  birthDate             DateTime?           @map("birth_date") @db.Date
   supervisorId        String?        @map("supervisor_id") @db.Uuid
   status              EmployeeStatus @default(ACTIVE)
   createdAt           DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -513,6 +515,7 @@ model Employee {
   meetingBookings     MeetingBooking[]
   attendanceCorrectnessRequests AttendanceCorrectnessRequest[]
   attendanceReminderLogs AttendanceReminderLog[]
+  birthdayWishLogs    BirthdayWishLog[]
   holidayAssignments  HolidayAssignment[]
   ttStaffMember       TtStaffMember?
   @@unique([organizationId, employeeCode])
@@ -962,6 +965,17 @@ model AttendanceReminderLog {
   @@map("attendance_reminder_logs")
 }
 
+model BirthdayWishLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  employeeId String   @map("employee_id") @db.Uuid
+  wishYear   Int      @map("wish_year")
+  sentAt     DateTime @default(now()) @map("sent_at") @db.Timestamptz(6)
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  @@unique([employeeId, wishYear])
+  @@index([wishYear])
+  @@map("birthday_wish_logs")
+}
+
 model UserDevice {
   id         String         @id @default(uuid()) @db.Uuid
   userId     String         @map("user_id") @db.Uuid
@@ -1014,23 +1028,26 @@ model EvaluationTemplateItem {
 }
 
 model EvaluationCycle {
-  id               String                 @id @default(uuid()) @db.Uuid
-  organizationId   String                 @map("organization_id") @db.Uuid
-  name             String
-  numberPrefix     String?                @map("number_prefix")
-  periodStart      DateTime               @map("period_start") @db.Date
-  periodEnd        DateTime               @map("period_end") @db.Date
-  selfDueAt        DateTime?              @map("self_due_at") @db.Timestamptz(6)
-  evaluatorDueAt   DateTime?              @map("evaluator_due_at") @db.Timestamptz(6)
-  status           EvaluationCycleStatus  @default(DRAFT)
-  openedAt         DateTime?              @map("opened_at") @db.Timestamptz(6)
-  closedAt         DateTime?              @map("closed_at") @db.Timestamptz(6)
-  createdByUserId  String                 @map("created_by_user_id") @db.Uuid
-  createdAt        DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt        DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
-  organization     Organization           @relation(fields: [organizationId], references: [id], onDelete: Restrict)
-  createdBy        User                   @relation("CycleCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
-  evaluations      Evaluation[]
+  id                     String                 @id @default(uuid()) @db.Uuid
+  organizationId         String                 @map("organization_id") @db.Uuid
+  name                   String
+  numberPrefix           String?                @map("number_prefix")
+  periodStart            DateTime               @map("period_start") @db.Date
+  periodEnd              DateTime               @map("period_end") @db.Date
+  /** Date range used for system Reliability/Attendance scoring; defaults to review period. */
+  attendancePeriodStart  DateTime               @map("attendance_period_start") @db.Date
+  attendancePeriodEnd    DateTime               @map("attendance_period_end") @db.Date
+  selfDueAt              DateTime?              @map("self_due_at") @db.Timestamptz(6)
+  evaluatorDueAt         DateTime?              @map("evaluator_due_at") @db.Timestamptz(6)
+  status                 EvaluationCycleStatus  @default(DRAFT)
+  openedAt               DateTime?              @map("opened_at") @db.Timestamptz(6)
+  closedAt               DateTime?              @map("closed_at") @db.Timestamptz(6)
+  createdByUserId        String                 @map("created_by_user_id") @db.Uuid
+  createdAt              DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization           Organization           @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  createdBy              User                   @relation("CycleCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  evaluations            Evaluation[]
   @@index([organizationId, status])
   @@index([organizationId, periodStart, periodEnd])
   @@map("evaluation_cycles")

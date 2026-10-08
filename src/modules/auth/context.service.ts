@@ -1,6 +1,8 @@
+import { DateTime } from "luxon";
 import { prisma } from "../../database/prisma.js";
 import { AppError } from "../../shared/errors/app-error.js";
 import { ROLE } from "../../shared/tenancy.js";
+import { birthdayTimezone, isBirthdayOnDate } from "../../shared/birthday.js";
 import {
   buildContextKey,
   parseContextKey,
@@ -23,7 +25,13 @@ async function loadUser(userId: string) {
       adminOffices: {
         include: { office: { select: { id: true, name: true, isActive: true, organizationId: true } } }
       },
-      employee: { include: { organization: true, office: { select: { id: true, name: true } } } }
+      employee: {
+        include: {
+          organization: true,
+          office: { select: { id: true, name: true, timezone: true } },
+          schedule: { select: { timezone: true } }
+        }
+      }
     }
   });
 }
@@ -162,6 +170,8 @@ export type ScopedIdentity = {
     lastName: string;
     employeeCode: string;
     displayName: string;
+    birthDate: string | null;
+    isBirthdayToday: boolean;
   } | null;
   activeContext: ActiveContext;
 };
@@ -213,12 +223,15 @@ export async function resolveScopedIdentity(userId: string, contextKey: string):
   }
 
   const employeeRecord = user.employee;
+  const employeeZone = birthdayTimezone(employeeRecord?.office?.timezone, employeeRecord?.schedule?.timezone);
   const employee = employeeRecord
     ? {
         firstName: employeeRecord.firstName,
         lastName: employeeRecord.lastName,
         employeeCode: employeeRecord.employeeCode,
-        displayName: buildEmployeeDisplayName(employeeRecord.firstName, employeeRecord.lastName, user.email)
+        displayName: buildEmployeeDisplayName(employeeRecord.firstName, employeeRecord.lastName, user.email),
+        birthDate: employeeRecord.birthDate ? employeeRecord.birthDate.toISOString().slice(0, 10) : null,
+        isBirthdayToday: isBirthdayOnDate(employeeRecord.birthDate, DateTime.now(), employeeZone)
       }
     : null;
 

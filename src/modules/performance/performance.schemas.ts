@@ -112,6 +112,10 @@ export const createCycleSchema = z.object({
       name: z.string().trim().min(2).max(200),
       periodStart: dateString,
       periodEnd: dateString,
+      /** Defaults to periodStart when omitted. */
+      attendancePeriodStart: optionalDateString,
+      /** Defaults to periodEnd when omitted. */
+      attendancePeriodEnd: optionalDateString,
       selfDueAt: z.coerce.date().optional().nullable(),
       evaluatorDueAt: z.coerce.date().optional().nullable(),
       numberPrefix: z.string().trim().max(40).optional().nullable(),
@@ -122,6 +126,17 @@ export const createCycleSchema = z.object({
       open: z.boolean().optional()
     })
     .refine((v) => v.periodEnd >= v.periodStart, { message: "periodEnd must be on or after periodStart", path: ["periodEnd"] })
+    .superRefine((v, ctx) => {
+      const attStart = v.attendancePeriodStart ?? v.periodStart;
+      const attEnd = v.attendancePeriodEnd ?? v.periodEnd;
+      if (attEnd < attStart) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "attendancePeriodEnd must be on or after attendancePeriodStart",
+          path: ["attendancePeriodEnd"]
+        });
+      }
+    })
 });
 
 export const updateCycleSchema = z.object({
@@ -131,11 +146,24 @@ export const updateCycleSchema = z.object({
       name: z.string().trim().min(2).max(200),
       periodStart: dateString,
       periodEnd: dateString,
+      attendancePeriodStart: optionalDateString,
+      attendancePeriodEnd: optionalDateString,
       selfDueAt: z.coerce.date().optional().nullable(),
       evaluatorDueAt: z.coerce.date().optional().nullable(),
       numberPrefix: z.string().trim().max(40).optional().nullable()
     })
     .refine((v) => v.periodEnd >= v.periodStart, { message: "periodEnd must be on or after periodStart", path: ["periodEnd"] })
+    .superRefine((v, ctx) => {
+      const attStart = v.attendancePeriodStart ?? v.periodStart;
+      const attEnd = v.attendancePeriodEnd ?? v.periodEnd;
+      if (attEnd < attStart) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "attendancePeriodEnd must be on or after attendancePeriodStart",
+          path: ["attendancePeriodEnd"]
+        });
+      }
+    })
 });
 
 export const listCyclesSchema = z.object({

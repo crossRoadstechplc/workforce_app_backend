@@ -20,6 +20,7 @@ export const createEmployeeSchema = z.object({
   departmentId: z.string().uuid().optional().nullable(),
   evaluationTemplateId: z.string().uuid().optional().nullable(),
   employmentStartDate: z.coerce.date(),
+  birthDate: z.coerce.date().optional().nullable(),
   officeId: z.string().uuid().optional().nullable(),
   scheduleId: z.string().uuid().optional().nullable(),
   supervisorId: z.string().uuid().optional().nullable(),
@@ -37,6 +38,7 @@ export const updateEmployeeSchema = z.object({
   departmentId: z.string().uuid().optional().nullable(),
   evaluationTemplateId: z.string().uuid().optional().nullable(),
   employmentStartDate: z.coerce.date().optional(),
+  birthDate: z.coerce.date().optional().nullable(),
   officeId: z.string().uuid().optional().nullable(),
   scheduleId: z.string().uuid().optional().nullable(),
   supervisorId: z.string().uuid().optional().nullable()

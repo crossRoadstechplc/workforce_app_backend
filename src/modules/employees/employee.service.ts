@@ -53,6 +53,7 @@ type CreateEmployeeInput = {
   departmentId?: string | null;
   evaluationTemplateId?: string | null;
   employmentStartDate: Date;
+  birthDate?: Date | null;
   officeId?: string | null;
   scheduleId?: string | null;
   supervisorId?: string | null;
@@ -154,6 +155,7 @@ export const employeeService = {
             departmentId: input.departmentId,
             evaluationTemplateId: input.evaluationTemplateId,
             employmentStartDate: input.employmentStartDate,
+            birthDate: input.birthDate ?? null,
             officeId: input.officeId,
             scheduleId: input.scheduleId,
             supervisorId: input.supervisorId
@@ -220,6 +222,7 @@ export const employeeService = {
               departmentId: input.departmentId,
               evaluationTemplateId: input.evaluationTemplateId,
               employmentStartDate: input.employmentStartDate,
+              birthDate: input.birthDate ?? null,
               officeId: input.officeId,
               scheduleId: input.scheduleId,
               supervisorId: input.supervisorId
@@ -320,6 +323,7 @@ export const employeeService = {
       departmentId?: string | null;
       evaluationTemplateId?: string | null;
       employmentStartDate?: Date;
+      birthDate?: Date | null;
       officeId?: string | null;
       scheduleId?: string | null;
       supervisorId?: string | null;

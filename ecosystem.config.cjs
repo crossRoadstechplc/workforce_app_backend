@@ -88,6 +88,21 @@ module.exports = {
       merge_logs: true,
       out_file: "logs/holiday-auto-apply-out.log",
       error_file: "logs/holiday-auto-apply-error.log"
+    },
+    {
+      name: "workforce-birthday-wishes",
+      script: "dist/src/jobs/birthday-wishes.js",
+      cwd: __dirname,
+      exec_mode: "fork",
+      instances: 1,
+      env: { NODE_ENV: "production" },
+      autorestart: false,
+      // Once an hour; sends once per employee per year via BirthdayWishLog.
+      cron_restart: "10 * * * *",
+      time: true,
+      merge_logs: true,
+      out_file: "logs/birthday-wishes-out.log",
+      error_file: "logs/birthday-wishes-error.log"
     }
   ]
 };

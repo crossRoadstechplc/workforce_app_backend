@@ -24,6 +24,7 @@ export const acceptEmployeeSchema = z.object({
   departmentId: z.string().uuid().optional().nullable(),
   evaluationTemplateId: z.string().uuid().optional().nullable(),
   employmentStartDate: z.coerce.date(),
+  birthDate: z.coerce.date().optional().nullable(),
   employeeCode: z.preprocess(
     (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
     z.string().trim().min(2).max(50).transform((value) => value.toUpperCase()).optional()
@@ -38,6 +39,7 @@ export const createEmployeeInviteSchema = z.object({
   officeId: z.string().uuid().optional().nullable(),
   scheduleId: z.string().uuid().optional().nullable(),
   employmentStartDate: z.coerce.date().optional(),
+  birthDate: z.coerce.date().optional().nullable(),
   jobTitle: z.string().trim().max(200).optional().nullable(),
   departmentId: z.string().uuid().optional().nullable(),
   evaluationTemplateId: z.string().uuid().optional().nullable()

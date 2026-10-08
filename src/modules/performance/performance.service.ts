@@ -52,6 +52,8 @@ const evaluationInclude = {
 } as const;
 
 type PeriodSnapshot = {
+  attendancePeriodStart: string;
+  attendancePeriodEnd: string;
   attendanceDays: number;
   lateDays: number;
   lateMinutes: number;
@@ -88,6 +90,33 @@ function inclusiveRange(from: Date, to: Date) {
 
 function dateKey(d: Date) {
   return formatWorkDateKey(d);
+}
+
+function serializeCycleDates<T extends {
+  periodStart: Date;
+  periodEnd: Date;
+  attendancePeriodStart: Date;
+  attendancePeriodEnd: Date;
+}>(cycle: T) {
+  return {
+    ...cycle,
+    periodStart: dateKey(cycle.periodStart),
+    periodEnd: dateKey(cycle.periodEnd),
+    attendancePeriodStart: dateKey(cycle.attendancePeriodStart),
+    attendancePeriodEnd: dateKey(cycle.attendancePeriodEnd)
+  };
+}
+
+function resolveAttendancePeriod(input: {
+  periodStart: Date;
+  periodEnd: Date;
+  attendancePeriodStart?: Date | null;
+  attendancePeriodEnd?: Date | null;
+}) {
+  return {
+    attendancePeriodStart: input.attendancePeriodStart ?? input.periodStart,
+    attendancePeriodEnd: input.attendancePeriodEnd ?? input.periodEnd
+  };
 }
 
 function slugKey(section: string, label: string, index: number) {
@@ -241,6 +270,8 @@ async function periodSnapshot(employeeId: string, from: Date, to: Date): Promise
     holidayDays: holidayCount
   });
   return {
+    attendancePeriodStart: dateKey(from),
+    attendancePeriodEnd: dateKey(to),
     attendanceDays: timesheets.length,
     lateDays: totals.lateDays,
     lateMinutes: totals.lateMinutes,
@@ -412,6 +443,8 @@ function serializeEvaluation(row: Prisma.EvaluationGetPayload<{ include: typeof 
       status: row.cycle.status,
       periodStart: dateKey(row.cycle.periodStart),
       periodEnd: dateKey(row.cycle.periodEnd),
+      attendancePeriodStart: dateKey(row.cycle.attendancePeriodStart),
+      attendancePeriodEnd: dateKey(row.cycle.attendancePeriodEnd),
       selfDueAt: row.cycle.selfDueAt,
       evaluatorDueAt: row.cycle.evaluatorDueAt
     },
@@ -870,9 +903,7 @@ export const performanceService = {
           prisma.evaluation.count({ where: { cycleId: c.id, status: { in: ["EVALUATOR_SUBMITTED", "FINALIZED"] } } })
         ]);
         return {
-          ...c,
-          periodStart: dateKey(c.periodStart),
-          periodEnd: dateKey(c.periodEnd),
+          ...serializeCycleDates(c),
           counts: { total: c._count.evaluations, awaitingSelf, awaitingEvaluator, done }
         };
       })
@@ -886,7 +917,7 @@ export const performanceService = {
       include: { _count: { select: { evaluations: true } } }
     });
     if (!cycle) throw new AppError(404, "CYCLE_NOT_FOUND", "Evaluation cycle not found");
-    return { ...cycle, periodStart: dateKey(cycle.periodStart), periodEnd: dateKey(cycle.periodEnd) };
+    return serializeCycleDates(cycle);
   },
 
   async updateCycle(
@@ -896,6 +927,8 @@ export const performanceService = {
       name: string;
       periodStart: Date;
       periodEnd: Date;
+      attendancePeriodStart?: Date | null;
+      attendancePeriodEnd?: Date | null;
       selfDueAt?: Date | null;
       evaluatorDueAt?: Date | null;
       numberPrefix?: string | null;
@@ -907,12 +940,15 @@ export const performanceService = {
     if (cycle.status !== "DRAFT") {
       throw new AppError(409, "CYCLE_NOT_DRAFT", "Only draft cycles can be edited");
     }
+    const attendance = resolveAttendancePeriod(input);
     const updated = await prisma.evaluationCycle.update({
       where: { id: cycleId },
       data: {
         name: input.name,
         periodStart: input.periodStart,
         periodEnd: input.periodEnd,
+        attendancePeriodStart: attendance.attendancePeriodStart,
+        attendancePeriodEnd: attendance.attendancePeriodEnd,
         selfDueAt: input.selfDueAt ?? null,
         evaluatorDueAt: input.evaluatorDueAt ?? null,
         numberPrefix: input.numberPrefix ?? cycleNumberPrefix(input.periodEnd, input.numberPrefix)
@@ -928,6 +964,8 @@ export const performanceService = {
           name: cycle.name,
           periodStart: dateKey(cycle.periodStart),
           periodEnd: dateKey(cycle.periodEnd),
+          attendancePeriodStart: dateKey(cycle.attendancePeriodStart),
+          attendancePeriodEnd: dateKey(cycle.attendancePeriodEnd),
           selfDueAt: cycle.selfDueAt,
           evaluatorDueAt: cycle.evaluatorDueAt,
           numberPrefix: cycle.numberPrefix
@@ -936,6 +974,8 @@ export const performanceService = {
           name: updated.name,
           periodStart: dateKey(updated.periodStart),
           periodEnd: dateKey(updated.periodEnd),
+          attendancePeriodStart: dateKey(updated.attendancePeriodStart),
+          attendancePeriodEnd: dateKey(updated.attendancePeriodEnd),
           selfDueAt: updated.selfDueAt,
           evaluatorDueAt: updated.evaluatorDueAt,
           numberPrefix: updated.numberPrefix
@@ -944,7 +984,7 @@ export const performanceService = {
         userAgent: audit.userAgent
       }
     });
-    return { ...updated, periodStart: dateKey(updated.periodStart), periodEnd: dateKey(updated.periodEnd) };
+    return serializeCycleDates(updated);
   },
 
   async createCycle(
@@ -954,6 +994,8 @@ export const performanceService = {
       name: string;
       periodStart: Date;
       periodEnd: Date;
+      attendancePeriodStart?: Date | null;
+      attendancePeriodEnd?: Date | null;
       selfDueAt?: Date | null;
       evaluatorDueAt?: Date | null;
       numberPrefix?: string | null;
@@ -967,12 +1009,15 @@ export const performanceService = {
     scope: OfficeScope
   ) {
     if (input.officeId) assertOfficeInScope(scope, input.officeId);
+    const attendance = resolveAttendancePeriod(input);
     const cycle = await prisma.evaluationCycle.create({
       data: {
         organizationId,
         name: input.name,
         periodStart: input.periodStart,
         periodEnd: input.periodEnd,
+        attendancePeriodStart: attendance.attendancePeriodStart,
+        attendancePeriodEnd: attendance.attendancePeriodEnd,
         selfDueAt: input.selfDueAt ?? null,
         evaluatorDueAt: input.evaluatorDueAt ?? null,
         numberPrefix: input.numberPrefix ?? cycleNumberPrefix(input.periodEnd, input.numberPrefix),
@@ -986,7 +1031,13 @@ export const performanceService = {
         action: "EVALUATION_CYCLE_CREATED",
         entityType: "EvaluationCycle",
         entityId: cycle.id,
-        newValues: auditJson({ name: cycle.name, periodStart: dateKey(cycle.periodStart), periodEnd: dateKey(cycle.periodEnd) }),
+        newValues: auditJson({
+          name: cycle.name,
+          periodStart: dateKey(cycle.periodStart),
+          periodEnd: dateKey(cycle.periodEnd),
+          attendancePeriodStart: dateKey(cycle.attendancePeriodStart),
+          attendancePeriodEnd: dateKey(cycle.attendancePeriodEnd)
+        }),
         ipAddress: audit.ipAddress,
         userAgent: audit.userAgent
       }
@@ -994,7 +1045,7 @@ export const performanceService = {
     if (input.open) {
       return this.openCycle(organizationId, cycle.id, { officeId: input.officeId, employeeIds: input.employeeIds, allActive: input.allActive, templateId: input.templateId }, audit, scope);
     }
-    return { ...cycle, periodStart: dateKey(cycle.periodStart), periodEnd: dateKey(cycle.periodEnd) };
+    return serializeCycleDates(cycle);
   },
 
   async openCycle(
@@ -1036,7 +1087,7 @@ export const performanceService = {
         const exists = await tx.evaluation.findUnique({ where: { cycleId_employeeId: { cycleId, employeeId: emp.id } } });
         if (exists) continue;
         const template = await pickTemplate(organizationId, emp.jobTitle, input.templateId ?? emp.evaluationTemplateId);
-        const snapshot = await periodSnapshot(emp.id, cycle.periodStart, cycle.periodEnd);
+        const snapshot = await periodSnapshot(emp.id, cycle.attendancePeriodStart, cycle.attendancePeriodEnd);
         const number = await nextEvaluationNumber(tx, organizationId, prefix);
         const scoreItems = template.items.filter((i) => SCORED_SECTIONS.includes(i.section));
         const evaluation = await tx.evaluation.create({
@@ -1132,7 +1183,7 @@ export const performanceService = {
     for (const row of employeeUsers) {
       if (row.employee.userId) emitToUser(row.employee.userId, "evaluation.cycle_closed", { cycleId });
     }
-    return { ...updated, periodStart: dateKey(updated.periodStart), periodEnd: dateKey(updated.periodEnd) };
+    return serializeCycleDates(updated);
   },
 
   async deleteCycle(organizationId: string, cycleId: string, audit: AuditContext) {

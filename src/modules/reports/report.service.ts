@@ -5,6 +5,7 @@ import { auditJson, type AuditContext } from "../../shared/audit.js";
 import { assertSameOrganization } from "../../shared/tenancy.js";
 import { assertOfficeInScope, employeeOfficeFilter, type OfficeScope } from "../../shared/office-scope.js";
 import { formatWorkDateKey, mapFormattedWorkDates } from "../../shared/work-date.js";
+import { birthdayTimezone, formatBirthdayPersonName, isBirthdayOnDate } from "../../shared/birthday.js";
 
 function employeeScope(organizationId: string, scope: OfficeScope, officeId?: string) {
   return { organizationId, ...employeeOfficeFilter(scope, officeId) };
@@ -45,35 +46,48 @@ export const reportService = {
     const employeeWhere = { status: "ACTIVE" as const, ...employeeScope(organizationId, scope, officeId) };
     const timesheetWhere = { employee: employeeScope(organizationId, scope, officeId), workDate: { gte: start, lt: end } };
 
-    const [totalEmployees, timesheets, approvedLeaves, holidayAssignments, worksheetCount, pendingLeaveCount] = await prisma.$transaction([
-      prisma.employee.count({ where: employeeWhere }),
-      prisma.timesheet.findMany({
-        where: timesheetWhere,
-        select: {
-          employeeId: true,
-          status: true,
-          isOpen: true,
-          isLate: true,
-          isMissingCheckout: true,
-          actualCheckOut: true,
-          worksheet: { select: { id: true } }
-        }
-      }),
-      prisma.leaveRequest.findMany({
-        where: { status: "APPROVED", startDate: { lte: start }, endDate: { gte: start }, employee: employeeWhere },
-        select: { employeeId: true }
-      }),
-      prisma.holidayAssignment.findMany({
-        where: { workDate: start, employee: employeeWhere },
-        select: { employeeId: true }
-      }),
-      prisma.worksheet.count({
-        where: { workDate: { gte: start, lt: end }, employee: employeeScope(organizationId, scope, officeId) }
-      }),
-      prisma.leaveRequest.count({
-        where: { status: "PENDING", employee: employeeScope(organizationId, scope, officeId) }
-      })
-    ]);
+    const [totalEmployees, timesheets, approvedLeaves, holidayAssignments, worksheetCount, pendingLeaveCount, birthdayCandidates] =
+      await prisma.$transaction([
+        prisma.employee.count({ where: employeeWhere }),
+        prisma.timesheet.findMany({
+          where: timesheetWhere,
+          select: {
+            employeeId: true,
+            status: true,
+            isOpen: true,
+            isLate: true,
+            isMissingCheckout: true,
+            actualCheckOut: true,
+            worksheet: { select: { id: true } }
+          }
+        }),
+        prisma.leaveRequest.findMany({
+          where: { status: "APPROVED", startDate: { lte: start }, endDate: { gte: start }, employee: employeeWhere },
+          select: { employeeId: true }
+        }),
+        prisma.holidayAssignment.findMany({
+          where: { workDate: start, employee: employeeWhere },
+          select: { employeeId: true }
+        }),
+        prisma.worksheet.count({
+          where: { workDate: { gte: start, lt: end }, employee: employeeScope(organizationId, scope, officeId) }
+        }),
+        prisma.leaveRequest.count({
+          where: { status: "PENDING", employee: employeeScope(organizationId, scope, officeId) }
+        }),
+        prisma.employee.findMany({
+          where: { ...employeeWhere, birthDate: { not: null } },
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            birthDate: true,
+            office: { select: { timezone: true } },
+            schedule: { select: { timezone: true } }
+          },
+          orderBy: [{ firstName: "asc" }, { lastName: "asc" }]
+        })
+      ]);
 
     const attended = new Set(timesheets.map((x) => x.employeeId));
     const onLeave = new Set(approvedLeaves.map((x) => x.employeeId));
@@ -84,6 +98,22 @@ export const reportService = {
     const missingCheckout = timesheets.filter((x) => x.isMissingCheckout).length;
     const onTime = timesheets.filter((x) => !x.isLate).length;
     const absentOrNotCheckedIn = Math.max(0, totalEmployees - new Set([...attended, ...onLeave, ...onHoliday]).size);
+
+    const now = DateTime.fromJSDate(date);
+    const birthdaysToday = birthdayCandidates
+      .filter((employee) =>
+        isBirthdayOnDate(
+          employee.birthDate,
+          now,
+          birthdayTimezone(employee.office?.timezone, employee.schedule?.timezone)
+        )
+      )
+      .map((employee) => ({
+        id: employee.id,
+        firstName: employee.firstName,
+        lastName: employee.lastName,
+        displayName: formatBirthdayPersonName(employee)
+      }));
 
     return {
       date: start.toISOString().slice(0, 10),
@@ -97,7 +127,8 @@ export const reportService = {
       notCheckedIn: absentOrNotCheckedIn,
       missingCheckout,
       worksheetsSubmitted: worksheetCount,
-      pendingLeaveRequests: pendingLeaveCount
+      pendingLeaveRequests: pendingLeaveCount,
+      birthdaysToday
     };
   },
 

@@ -302,6 +302,7 @@ export const inviteService = {
     departmentId?: string | null;
     evaluationTemplateId?: string | null;
     employmentStartDate: Date;
+    birthDate?: Date | null;
     employeeCode?: string;
     officeId?: string | null;
     scheduleId?: string | null;
@@ -318,6 +319,7 @@ export const inviteService = {
 
     const payload = (invite.payload ?? {}) as {
       employmentStartDate?: string;
+      birthDate?: string;
       jobTitle?: string | null;
       departmentId?: string | null;
       evaluationTemplateId?: string | null;
@@ -344,6 +346,7 @@ export const inviteService = {
         departmentId: input.departmentId ?? payload.departmentId,
         evaluationTemplateId: input.evaluationTemplateId ?? payload.evaluationTemplateId,
         employmentStartDate: input.employmentStartDate,
+        birthDate: input.birthDate ?? (payload.birthDate ? new Date(payload.birthDate) : null),
         officeId,
         scheduleId,
         ...(needsPassword && input.password
@@ -374,6 +377,7 @@ export const inviteService = {
       officeId?: string | null;
       scheduleId?: string | null;
       employmentStartDate?: Date;
+      birthDate?: Date | null;
       jobTitle?: string | null;
       departmentId?: string | null;
       evaluationTemplateId?: string | null;
@@ -394,6 +398,7 @@ export const inviteService = {
         scheduleId: input.scheduleId,
         payload: {
           ...(input.employmentStartDate ? { employmentStartDate: input.employmentStartDate.toISOString().slice(0, 10) } : {}),
+          ...(input.birthDate ? { birthDate: input.birthDate.toISOString().slice(0, 10) } : {}),
           ...(input.jobTitle ? { jobTitle: input.jobTitle } : {}),
           ...(input.departmentId ? { departmentId: input.departmentId } : {}),
           ...(input.evaluationTemplateId ? { evaluationTemplateId: input.evaluationTemplateId } : {})
@@ -484,6 +489,7 @@ export const inviteService = {
       officeId?: string | null;
       scheduleId?: string | null;
       employmentStartDate?: Date;
+      birthDate?: Date | null;
       jobTitle?: string | null;
       departmentId?: string | null;
       evaluationTemplateId?: string | null;
@@ -519,6 +525,7 @@ export const inviteService = {
 
     const currentPayload = (invite.payload ?? {}) as {
       employmentStartDate?: string;
+      birthDate?: string;
       jobTitle?: string | null;
       departmentId?: string | null;
       evaluationTemplateId?: string | null;
@@ -527,6 +534,9 @@ export const inviteService = {
       ...currentPayload,
       ...(input.employmentStartDate !== undefined
         ? { employmentStartDate: input.employmentStartDate.toISOString().slice(0, 10) }
+        : {}),
+      ...(input.birthDate !== undefined
+        ? { birthDate: input.birthDate ? input.birthDate.toISOString().slice(0, 10) : null }
         : {}),
       ...(input.jobTitle !== undefined ? { jobTitle: input.jobTitle } : {}),
       ...(input.departmentId !== undefined ? { departmentId: input.departmentId } : {}),
