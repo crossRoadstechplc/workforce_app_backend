@@ -3,6 +3,11 @@ import { easyPasswordSchema } from "../../shared/password.js";
 
 export const invitePasswordSchema = easyPasswordSchema;
 
+const optionalBirthDate = z.preprocess(
+  (value) => (value === "" || value === undefined ? null : value),
+  z.coerce.date().nullable()
+);
+
 export const inviteTokenParamsSchema = z.object({
   token: z.string().min(20)
 });
@@ -24,7 +29,7 @@ export const acceptEmployeeSchema = z.object({
   departmentId: z.string().uuid().optional().nullable(),
   evaluationTemplateId: z.string().uuid().optional().nullable(),
   employmentStartDate: z.coerce.date(),
-  birthDate: z.coerce.date().optional().nullable(),
+  birthDate: optionalBirthDate.optional(),
   employeeCode: z.preprocess(
     (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
     z.string().trim().min(2).max(50).transform((value) => value.toUpperCase()).optional()
@@ -39,7 +44,7 @@ export const createEmployeeInviteSchema = z.object({
   officeId: z.string().uuid().optional().nullable(),
   scheduleId: z.string().uuid().optional().nullable(),
   employmentStartDate: z.coerce.date().optional(),
-  birthDate: z.coerce.date().optional().nullable(),
+  birthDate: optionalBirthDate.optional(),
   jobTitle: z.string().trim().max(200).optional().nullable(),
   departmentId: z.string().uuid().optional().nullable(),
   evaluationTemplateId: z.string().uuid().optional().nullable()

@@ -8,6 +8,11 @@ const optionalEmployeeCode = z.preprocess(
   (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
   z.string().trim().min(2).max(50).transform((value) => value.toUpperCase()).optional()
 );
+/** Empty / missing birth date stays null — never required, never crashes. */
+const optionalBirthDate = z.preprocess(
+  (value) => (value === "" || value === undefined ? null : value),
+  z.coerce.date().nullable()
+);
 
 export const createEmployeeSchema = z.object({
   email: z.string().trim().email().transform((value) => value.toLowerCase()),
@@ -20,7 +25,7 @@ export const createEmployeeSchema = z.object({
   departmentId: z.string().uuid().optional().nullable(),
   evaluationTemplateId: z.string().uuid().optional().nullable(),
   employmentStartDate: z.coerce.date(),
-  birthDate: z.coerce.date().optional().nullable(),
+  birthDate: optionalBirthDate.optional(),
   officeId: z.string().uuid().optional().nullable(),
   scheduleId: z.string().uuid().optional().nullable(),
   supervisorId: z.string().uuid().optional().nullable(),
@@ -38,7 +43,7 @@ export const updateEmployeeSchema = z.object({
   departmentId: z.string().uuid().optional().nullable(),
   evaluationTemplateId: z.string().uuid().optional().nullable(),
   employmentStartDate: z.coerce.date().optional(),
-  birthDate: z.coerce.date().optional().nullable(),
+  birthDate: optionalBirthDate.optional(),
   officeId: z.string().uuid().optional().nullable(),
   scheduleId: z.string().uuid().optional().nullable(),
   supervisorId: z.string().uuid().optional().nullable()

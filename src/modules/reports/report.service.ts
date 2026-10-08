@@ -128,7 +128,7 @@ export const reportService = {
       missingCheckout,
       worksheetsSubmitted: worksheetCount,
       pendingLeaveRequests: pendingLeaveCount,
-      birthdaysToday
+      birthdaysToday: birthdaysToday ?? []
     };
   },
 
