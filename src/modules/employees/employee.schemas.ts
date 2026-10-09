@@ -8,7 +8,7 @@ const optionalEmployeeCode = z.preprocess(
   (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
   z.string().trim().min(2).max(50).transform((value) => value.toUpperCase()).optional()
 );
-/** Empty / missing birth date stays null — never required, never crashes. */
+/** Empty / missing birth date stays null. Never required, never crashes. */
 const optionalBirthDate = z.preprocess(
   (value) => (value === "" || value === undefined ? null : value),
   z.coerce.date().nullable()

@@ -5,7 +5,13 @@ import { auditJson, type AuditContext } from "../../shared/audit.js";
 import { assertSameOrganization } from "../../shared/tenancy.js";
 import { assertOfficeInScope, employeeOfficeFilter, type OfficeScope } from "../../shared/office-scope.js";
 import { formatWorkDateKey, mapFormattedWorkDates } from "../../shared/work-date.js";
-import { birthdayTimezone, formatBirthdayPersonName, isBirthdayOnDate } from "../../shared/birthday.js";
+import {
+  birthdayInWeek,
+  birthdayTimezone,
+  formatBirthdayPersonName,
+  formatBirthdayWeekLabel,
+  birthMonthDay
+} from "../../shared/birthday.js";
 
 function employeeScope(organizationId: string, scope: OfficeScope, officeId?: string) {
   return { organizationId, ...employeeOfficeFilter(scope, officeId) };
@@ -100,20 +106,25 @@ export const reportService = {
     const absentOrNotCheckedIn = Math.max(0, totalEmployees - new Set([...attended, ...onLeave, ...onHoliday]).size);
 
     const now = DateTime.fromJSDate(date);
-    const birthdaysToday = birthdayCandidates
-      .filter((employee) =>
-        isBirthdayOnDate(
-          employee.birthDate,
-          now,
-          birthdayTimezone(employee.office?.timezone, employee.schedule?.timezone)
-        )
-      )
-      .map((employee) => ({
-        id: employee.id,
-        firstName: employee.firstName,
-        lastName: employee.lastName,
-        displayName: formatBirthdayPersonName(employee)
-      }));
+    const birthdaysThisWeek = birthdayCandidates
+      .map((employee) => {
+        const zone = birthdayTimezone(employee.office?.timezone, employee.schedule?.timezone);
+        const occurrence = birthdayInWeek(employee.birthDate, now, zone);
+        if (!occurrence || !employee.birthDate) return null;
+        const { month, day } = birthMonthDay(employee.birthDate);
+        return {
+          id: employee.id,
+          firstName: employee.firstName,
+          lastName: employee.lastName,
+          displayName: formatBirthdayPersonName(employee),
+          month,
+          day,
+          dateLabel: formatBirthdayWeekLabel(occurrence),
+          occursOn: occurrence.toISODate()!
+        };
+      })
+      .filter((row): row is NonNullable<typeof row> => row != null)
+      .sort((a, b) => a.occursOn.localeCompare(b.occursOn) || a.displayName.localeCompare(b.displayName));
 
     return {
       date: start.toISOString().slice(0, 10),
@@ -128,7 +139,7 @@ export const reportService = {
       missingCheckout,
       worksheetsSubmitted: worksheetCount,
       pendingLeaveRequests: pendingLeaveCount,
-      birthdaysToday: birthdaysToday ?? []
+      birthdaysThisWeek
     };
   },
 

@@ -56,7 +56,7 @@ export const birthdayWishService = {
               userId: employee.userId,
               type: "BIRTHDAY_WISH",
               title: "Happy Birthday!",
-              message: `Happy Birthday, ${name}! Wishing you a wonderful day — from ${orgName}.`,
+              message: `Happy Birthday, ${name}! Wishing you a wonderful day from ${orgName}.`,
               relatedEntityType: "Employee",
               relatedEntityId: employee.id
             }
