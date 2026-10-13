@@ -77,7 +77,10 @@ export const subscriptionListSchema = z.object({
   })
 });
 
-const subscriptionBody = z.object({
+const assigneeType = z.enum(["PERSON", "TEAM", "COMPANY"]);
+const paymentStatus = z.enum(["WAITING", "PAID", "CANCELLED"]);
+
+const subscriptionBodyFields = z.object({
   name: z.string().trim().min(1).max(150),
   vendor: optionalText(150),
   category: optionalText(80),
@@ -98,21 +101,47 @@ const subscriptionBody = z.object({
   notes: optionalText(2000),
   officeId: optionalUuid,
   loginCredentialId: optionalUuid,
+  assigneeType: assigneeType.optional().default("COMPANY"),
+  employeeId: optionalUuid,
+  departmentId: optionalUuid,
   fromYearMonth: z.preprocess(emptyToUndefined, yearMonth.optional())
+});
+
+const subscriptionBody = subscriptionBodyFields.superRefine((value, ctx) => {
+  const type = value.assigneeType ?? "COMPANY";
+  if (type === "PERSON" && !value.employeeId) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Person is required", path: ["employeeId"] });
+  }
+  if (type === "TEAM" && !value.departmentId) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Team is required", path: ["departmentId"] });
+  }
 });
 
 export const createSubscriptionSchema = z.object({ body: subscriptionBody });
 export const updateSubscriptionSchema = z.object({
   params: z.object({ id: uuid }),
-  body: subscriptionBody.partial().refine((value) => Object.keys(value).length > 0, "At least one field is required")
+  body: subscriptionBodyFields
+    .partial()
+    .refine((value) => Object.keys(value).length > 0, "At least one field is required")
+    .superRefine((value, ctx) => {
+      if (value.assigneeType === "PERSON" && value.employeeId === null) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Person is required", path: ["employeeId"] });
+      }
+      if (value.assigneeType === "TEAM" && value.departmentId === null) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Team is required", path: ["departmentId"] });
+      }
+    })
 });
 
 export const upsertPeriodSchema = z.object({
   params: z.object({ id: uuid, yearMonth }),
-  body: z.object({
-    seats: z.coerce.number().int().min(1).max(100000).optional(),
-    amount: z.coerce.number().min(0).max(1_000_000).optional(),
-    paid: z.boolean().optional(),
-    notes: optionalText(500)
-  }).refine((value) => Object.keys(value).length > 0, "At least one field is required")
+  body: z
+    .object({
+      seats: z.coerce.number().int().min(1).max(100000).optional(),
+      amount: z.coerce.number().min(0).max(1_000_000).optional(),
+      paid: z.boolean().optional(),
+      paymentStatus: paymentStatus.optional(),
+      notes: optionalText(500)
+    })
+    .refine((value) => Object.keys(value).length > 0, "At least one field is required")
 });
