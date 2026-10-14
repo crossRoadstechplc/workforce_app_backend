@@ -25,6 +25,7 @@ export const PERMISSION_ACTIONS: Array<{ id: PermissionActionId; group: string; 
   { id: "schedule.delete", group: "Schedule", label: "Delete schedule events" },
   { id: "backup.export", group: "Backup", label: "Export a backup file" },
   { id: "backup.import", group: "Backup", label: "Import a backup file" },
+  { id: "activity.viewOngoing", group: "Activity", label: "View Ongoing activity for assigned projects" },
   { id: "settings.editPermissions", group: "Settings", label: "Edit the permission matrix" }
 ];
 
@@ -54,6 +55,7 @@ export const DEFAULT_PERMISSION_MATRIX: Record<PermissionRoleLabel, Record<strin
     "schedule.delete": true,
     "backup.export": true,
     "backup.import": true,
+    "activity.viewOngoing": true,
     "settings.editPermissions": true
   },
   Lead: {
@@ -80,6 +82,7 @@ export const DEFAULT_PERMISSION_MATRIX: Record<PermissionRoleLabel, Record<strin
     "schedule.delete": true,
     "backup.export": true,
     "backup.import": false,
+    "activity.viewOngoing": true,
     "settings.editPermissions": false
   },
   "Senior Staff": {
@@ -106,6 +109,7 @@ export const DEFAULT_PERMISSION_MATRIX: Record<PermissionRoleLabel, Record<strin
     "schedule.delete": false,
     "backup.export": true,
     "backup.import": false,
+    "activity.viewOngoing": true,
     "settings.editPermissions": false
   },
   "Junior Staff": {
@@ -132,6 +136,7 @@ export const DEFAULT_PERMISSION_MATRIX: Record<PermissionRoleLabel, Record<strin
     "schedule.delete": false,
     "backup.export": false,
     "backup.import": false,
+    "activity.viewOngoing": true,
     "settings.editPermissions": false
   }
 };

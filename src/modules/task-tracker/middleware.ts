@@ -1,7 +1,7 @@
 import type { Request, RequestHandler, Response } from "express";
 import { AppError } from "../../shared/errors/app-error.js";
 import { requireOrganizationId } from "../../shared/tenancy.js";
-import { getLegacyWorkspaceData } from "./mapper.js";
+import { loadPermissionMatrix } from "./mapper.js";
 import { resolveTrackerContext } from "./membership.service.js";
 import { can, type PermissionActionId } from "./permissions.js";
 import type { ActorContext } from "./types.js";
@@ -37,11 +37,13 @@ export function requireTrackerPermission(actionId: PermissionActionId): RequestH
   return async (req, _res, next) => {
     try {
       const actor = actorFromRequest(req);
-      const data = await getLegacyWorkspaceData(actor.workspaceId, {
-        staffMemberId: actor.staffMemberId,
-        permissionRole: actor.permissionRole
-      });
-      if (!can(actor.permissionRole, actionId, data.permissionMatrix)) {
+      // Super Admin always allowed — avoid loading the full workspace on every mutation.
+      if (actor.permissionRole === "Super Admin") {
+        next();
+        return;
+      }
+      const permissionMatrix = await loadPermissionMatrix(actor.workspaceId);
+      if (!can(actor.permissionRole, actionId, permissionMatrix)) {
         throw new AppError(403, "FORBIDDEN", "Forbidden.");
       }
       next();

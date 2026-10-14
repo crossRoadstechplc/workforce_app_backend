@@ -149,6 +149,31 @@ async function loadWorkspace(workspaceId: string) {
   });
 }
 
+/** Lightweight permission matrix for auth checks — skips staff sync + full workspace load. */
+export async function loadPermissionMatrix(
+  workspaceId: string
+): Promise<WorkspaceData["permissionMatrix"]> {
+  const rules = await prisma.ttPermissionRule.findMany({
+    where: { workspaceId },
+    select: { role: true, actionId: true, allowed: true }
+  });
+
+  const permissionMatrix = PERMISSION_ROLE_LABELS.reduce(
+    (matrix, roleLabel) => {
+      matrix[roleLabel] = {};
+      return matrix;
+    },
+    {} as Record<PermissionRoleLabel, Record<string, boolean>>
+  );
+
+  for (const rule of rules) {
+    const roleLabel = PERMISSION_ROLE_FROM_DB[rule.role as TtPermissionRoleDb];
+    permissionMatrix[roleLabel][rule.actionId] = rule.allowed;
+  }
+
+  return permissionMatrix;
+}
+
 export async function getLegacyWorkspaceData(
   workspaceId: string,
   viewer?: WorkspaceViewer

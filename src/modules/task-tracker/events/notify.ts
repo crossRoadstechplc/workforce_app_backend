@@ -105,9 +105,16 @@ export async function publishWorkspaceEvent(
     await prisma.$executeRaw`SELECT pg_notify(${NOTIFY_CHANNEL}, ${JSON.stringify(event)})`;
   } catch (error) {
     logger.warn({ err: error }, "tt workspace pg_notify failed");
+    // Fall back to in-process delivery when NOTIFY is unavailable.
+    fanOut(event);
+    return event;
   }
 
-  fanOut(event);
+  // Prefer LISTEN→fanOut so the same process does not deliver each event twice
+  // (direct fanOut + pg_notify echo). If LISTEN is down, fall back above.
+  if (!listenClient) {
+    fanOut(event);
+  }
   return event;
 }
 

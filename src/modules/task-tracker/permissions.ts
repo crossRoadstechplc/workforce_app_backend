@@ -38,6 +38,7 @@ export type PermissionActionId =
   | "schedule.delete"
   | "backup.export"
   | "backup.import"
+  | "activity.viewOngoing"
   | "settings.editPermissions";
 
 export function can(
