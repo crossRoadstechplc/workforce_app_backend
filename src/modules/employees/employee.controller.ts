@@ -2,8 +2,9 @@ import type { RequestHandler } from "express";
 import { auditContextFromRequest } from "../../shared/audit.js";
 import { getOfficeScope } from "../../shared/office-scope.js";
 import { requireOrganizationId } from "../../shared/tenancy.js";
-import { createEmployeeSchema, employeeListSchema, employeeParamsSchema, employeeStatusSchema, resetPasswordSchema, updateEmployeeSchema } from "./employee.schemas.js";
+import { createEmployeeSchema, employeeListSchema, employeeParamsSchema, employeeStatusSchema, resetPasswordSchema, updateEmergencyContactSchema, updateEmployeeSchema } from "./employee.schemas.js";
 import { employeeService } from "./employee.service.js";
+import { AppError } from "../../shared/errors/app-error.js";
 
 export const createEmployee: RequestHandler = async (req, res) => {
   const organizationId = requireOrganizationId(req.auth);
@@ -26,4 +27,9 @@ export const changeEmployeeStatus: RequestHandler = async (req, res) => {
 export const resetEmployeePassword: RequestHandler = async (req, res) => {
   const { employeeId } = employeeParamsSchema.parse(req.params);
   res.json(await employeeService.resetPassword(requireOrganizationId(req.auth), employeeId, resetPasswordSchema.parse(req.body), auditContextFromRequest(req), getOfficeScope(req.auth)));
+};
+
+export const updateMyEmergencyContact: RequestHandler = async (req, res) => {
+  if (!req.auth) throw new AppError(401, "AUTH_REQUIRED", "Authentication required");
+  res.json(await employeeService.updateEmergencyContact(req.auth.userId, updateEmergencyContactSchema.parse(req.body), auditContextFromRequest(req)));
 };

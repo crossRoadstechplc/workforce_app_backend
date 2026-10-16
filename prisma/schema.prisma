@@ -503,6 +503,8 @@ model Employee {
   middleName            String?             @map("middle_name")
   lastName              String              @map("last_name")
   phone                 String?
+  emergencyContactName  String?             @map("emergency_contact_name")
+  emergencyContactPhone String?             @map("emergency_contact_phone")
   jobTitle              String?             @map("job_title")
   employmentStartDate   DateTime            @map("employment_start_date") @db.Date
   birthDate             DateTime?           @map("birth_date") @db.Date

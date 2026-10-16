@@ -49,6 +49,8 @@ type CreateEmployeeInput = {
   middleName?: string | null;
   lastName: string;
   phone?: string | null;
+  emergencyContactName?: string | null;
+  emergencyContactPhone?: string | null;
   jobTitle?: string | null;
   departmentId?: string | null;
   evaluationTemplateId?: string | null;
@@ -151,6 +153,8 @@ export const employeeService = {
             middleName: input.middleName,
             lastName: input.lastName,
             phone: input.phone,
+            emergencyContactName: input.emergencyContactName,
+            emergencyContactPhone: input.emergencyContactPhone,
             jobTitle: input.jobTitle,
             departmentId: input.departmentId,
             evaluationTemplateId: input.evaluationTemplateId,
@@ -218,6 +222,8 @@ export const employeeService = {
               middleName: input.middleName,
               lastName: input.lastName,
               phone: input.phone,
+              emergencyContactName: input.emergencyContactName,
+              emergencyContactPhone: input.emergencyContactPhone,
               jobTitle: input.jobTitle,
               departmentId: input.departmentId,
               evaluationTemplateId: input.evaluationTemplateId,
@@ -319,6 +325,8 @@ export const employeeService = {
       middleName?: string | null;
       lastName?: string;
       phone?: string | null;
+      emergencyContactName?: string | null;
+      emergencyContactPhone?: string | null;
       jobTitle?: string | null;
       departmentId?: string | null;
       evaluationTemplateId?: string | null;
@@ -433,5 +441,53 @@ export const employeeService = {
       });
     });
     return { employeeId, temporaryPassword, mustChangePassword: true };
+  },
+
+  async updateEmergencyContact(
+    userId: string,
+    input: { emergencyContactName?: string | null; emergencyContactPhone?: string | null },
+    audit: AuditContext
+  ) {
+    const employee = await prisma.employee.findUnique({
+      where: { userId },
+      include: { user: { select: { status: true } } }
+    });
+    if (!employee || employee.status !== "ACTIVE" || employee.user.status !== "ACTIVE") {
+      throw new AppError(403, "EMPLOYEE_INACTIVE", "Active employee account required");
+    }
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const next = await tx.employee.update({
+        where: { id: employee.id },
+        data: {
+          ...(input.emergencyContactName !== undefined ? { emergencyContactName: input.emergencyContactName } : {}),
+          ...(input.emergencyContactPhone !== undefined ? { emergencyContactPhone: input.emergencyContactPhone } : {})
+        }
+      });
+      await tx.auditLog.create({
+        data: {
+          actorUserId: audit.actorUserId,
+          action: "EMPLOYEE_EMERGENCY_CONTACT_UPDATED",
+          entityType: "Employee",
+          entityId: employee.id,
+          oldValues: {
+            emergencyContactName: employee.emergencyContactName,
+            emergencyContactPhone: employee.emergencyContactPhone
+          },
+          newValues: {
+            emergencyContactName: next.emergencyContactName,
+            emergencyContactPhone: next.emergencyContactPhone
+          },
+          ipAddress: audit.ipAddress,
+          userAgent: audit.userAgent
+        }
+      });
+      return next;
+    });
+
+    return {
+      emergencyContactName: updated.emergencyContactName,
+      emergencyContactPhone: updated.emergencyContactPhone
+    };
   }
 };

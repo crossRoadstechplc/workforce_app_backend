@@ -1,10 +1,22 @@
 import { Router } from "express";
 import { authenticate, requireNormalSession, requireOrgContext, requirePermission } from "../../middleware/authenticate.js";
-import { changeEmployeeStatus, createEmployee, getEmployee, listEmployees, resetEmployeePassword, updateEmployee } from "./employee.controller.js";
+import {
+  changeEmployeeStatus,
+  createEmployee,
+  getEmployee,
+  listEmployees,
+  resetEmployeePassword,
+  updateEmployee,
+  updateMyEmergencyContact
+} from "./employee.controller.js";
 import { createEmployeeInvite } from "../invites/invite.controller.js";
 import { adjustEmployeeLeaveBalance, employeeLeaveBalance } from "../leave/leave.controller.js";
 import { validate } from "../../shared/validate.js";
 import { adjustLeaveBalanceSchema, employeeLeaveBalanceSchema } from "../leave/leave.schemas.js";
+
+export const employeeRouter = Router();
+employeeRouter.use(authenticate, requireNormalSession);
+employeeRouter.patch("/me/emergency-contact", updateMyEmergencyContact);
 
 export const employeeAdminRouter = Router();
 employeeAdminRouter.use(authenticate, requireNormalSession, requireOrgContext);

@@ -21,6 +21,8 @@ export const createEmployeeSchema = z.object({
   middleName: optionalText,
   lastName: z.string().trim().min(1).max(100),
   phone: optionalText,
+  emergencyContactName: optionalText,
+  emergencyContactPhone: optionalText,
   jobTitle: optionalText,
   departmentId: z.string().uuid().optional().nullable(),
   evaluationTemplateId: z.string().uuid().optional().nullable(),
@@ -39,6 +41,8 @@ export const updateEmployeeSchema = z.object({
   middleName: optionalText,
   lastName: z.string().trim().min(1).max(100).optional(),
   phone: optionalText,
+  emergencyContactName: optionalText,
+  emergencyContactPhone: optionalText,
   jobTitle: optionalText,
   departmentId: z.string().uuid().optional().nullable(),
   evaluationTemplateId: z.string().uuid().optional().nullable(),
@@ -61,6 +65,13 @@ export const resetPasswordSchema = z.object({
 });
 
 export const employeeParamsSchema = z.object({ employeeId: z.string().uuid() });
+
+export const updateEmergencyContactSchema = z
+  .object({
+    emergencyContactName: optionalText,
+    emergencyContactPhone: optionalText
+  })
+  .refine((value) => Object.keys(value).length > 0, "At least one field is required");
 
 export const employeeListSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
