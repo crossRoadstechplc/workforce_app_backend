@@ -2,10 +2,16 @@ import { Router } from "express";
 import { authenticate, requireNormalSession, requireOrgContext, requirePermission } from "../../middleware/authenticate.js";
 import {
   changeEmployeeStatus,
+  createAdminEmergencyContact,
   createEmployee,
+  createMyEmergencyContact,
+  deleteAdminEmergencyContact,
+  deleteMyEmergencyContact,
   getEmployee,
   listEmployees,
+  listMyEmergencyContacts,
   resetEmployeePassword,
+  updateAdminEmergencyContact,
   updateEmployee,
   updateMyEmergencyContact
 } from "./employee.controller.js";
@@ -16,7 +22,10 @@ import { adjustLeaveBalanceSchema, employeeLeaveBalanceSchema } from "../leave/l
 
 export const employeeRouter = Router();
 employeeRouter.use(authenticate, requireNormalSession);
-employeeRouter.patch("/me/emergency-contact", updateMyEmergencyContact);
+employeeRouter.get("/me/emergency-contacts", listMyEmergencyContacts);
+employeeRouter.post("/me/emergency-contacts", createMyEmergencyContact);
+employeeRouter.patch("/me/emergency-contacts/:contactId", updateMyEmergencyContact);
+employeeRouter.delete("/me/emergency-contacts/:contactId", deleteMyEmergencyContact);
 
 export const employeeAdminRouter = Router();
 employeeAdminRouter.use(authenticate, requireNormalSession, requireOrgContext);
@@ -25,6 +34,9 @@ employeeAdminRouter.post("/invites", requirePermission("employee.create"), creat
 employeeAdminRouter.get("/", requirePermission("employee.view"), listEmployees);
 employeeAdminRouter.get("/:employeeId/leave-balance", requirePermission("leave.view_all"), validate(employeeLeaveBalanceSchema), employeeLeaveBalance);
 employeeAdminRouter.post("/:employeeId/leave-balance/adjust", requirePermission("leave.approve"), validate(adjustLeaveBalanceSchema), adjustEmployeeLeaveBalance);
+employeeAdminRouter.post("/:employeeId/emergency-contacts", requirePermission("employee.update"), createAdminEmergencyContact);
+employeeAdminRouter.patch("/:employeeId/emergency-contacts/:contactId", requirePermission("employee.update"), updateAdminEmergencyContact);
+employeeAdminRouter.delete("/:employeeId/emergency-contacts/:contactId", requirePermission("employee.update"), deleteAdminEmergencyContact);
 employeeAdminRouter.get("/:employeeId", requirePermission("employee.view"), getEmployee);
 employeeAdminRouter.patch("/:employeeId", requirePermission("employee.update"), updateEmployee);
 employeeAdminRouter.patch("/:employeeId/status", requirePermission("employee.deactivate"), changeEmployeeStatus);

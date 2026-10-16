@@ -14,24 +14,7 @@ export const emergencyContactRelation = z.enum([
   "RELATIVE",
   "OTHER"
 ]);
-const optionalEmergencyContactRelation = emergencyContactRelation.optional().nullable();
 const optionalText = z.string().trim().max(200).optional().nullable();
-
-function refineEmergencyRelationOther<T extends {
-  emergencyContactRelation?: string | null;
-  emergencyContactRelationOther?: string | null;
-}>(value: T, ctx: z.RefinementCtx) {
-  if (value.emergencyContactRelation === "OTHER") {
-    const other = value.emergencyContactRelationOther?.trim();
-    if (!other) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["emergencyContactRelationOther"],
-        message: "Specify the relationship when Other is selected"
-      });
-    }
-  }
-}
 const optionalEmployeeCode = z.preprocess(
   (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
   z.string().trim().min(2).max(50).transform((value) => value.toUpperCase()).optional()
@@ -42,6 +25,19 @@ const optionalBirthDate = z.preprocess(
   z.coerce.date().nullable()
 );
 
+function refineRelationOther<T extends { relation?: string; relationOther?: string | null }>(value: T, ctx: z.RefinementCtx) {
+  if (value.relation === "OTHER") {
+    const other = value.relationOther?.trim();
+    if (!other) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["relationOther"],
+        message: "Specify the relationship when Other is selected"
+      });
+    }
+  }
+}
+
 export const createEmployeeSchema = z.object({
   email: z.string().trim().email().transform((value) => value.toLowerCase()),
   employeeCode: optionalEmployeeCode,
@@ -49,10 +45,6 @@ export const createEmployeeSchema = z.object({
   middleName: optionalText,
   lastName: z.string().trim().min(1).max(100),
   phone: optionalText,
-  emergencyContactName: optionalText,
-  emergencyContactPhone: optionalText,
-  emergencyContactRelation: optionalEmergencyContactRelation,
-  emergencyContactRelationOther: optionalText,
   jobTitle: optionalText,
   departmentId: z.string().uuid().optional().nullable(),
   evaluationTemplateId: z.string().uuid().optional().nullable(),
@@ -62,30 +54,26 @@ export const createEmployeeSchema = z.object({
   scheduleId: z.string().uuid().optional().nullable(),
   supervisorId: z.string().uuid().optional().nullable(),
   temporaryPassword: easyPasswordSchema.optional()
-}).superRefine(refineEmergencyRelationOther);
+});
 
-export const updateEmployeeSchema = z.object({
-  email: z.string().trim().email().transform((value) => value.toLowerCase()).optional(),
-  employeeCode: z.string().trim().min(2).max(50).transform((value) => value.toUpperCase()).optional(),
-  firstName: z.string().trim().min(1).max(100).optional(),
-  middleName: optionalText,
-  lastName: z.string().trim().min(1).max(100).optional(),
-  phone: optionalText,
-  emergencyContactName: optionalText,
-  emergencyContactPhone: optionalText,
-  emergencyContactRelation: optionalEmergencyContactRelation,
-  emergencyContactRelationOther: optionalText,
-  jobTitle: optionalText,
-  departmentId: z.string().uuid().optional().nullable(),
-  evaluationTemplateId: z.string().uuid().optional().nullable(),
-  employmentStartDate: z.coerce.date().optional(),
-  birthDate: optionalBirthDate.optional(),
-  officeId: z.string().uuid().optional().nullable(),
-  scheduleId: z.string().uuid().optional().nullable(),
-  supervisorId: z.string().uuid().optional().nullable()
-})
-  .refine((value) => Object.keys(value).length > 0, "At least one field is required")
-  .superRefine(refineEmergencyRelationOther);
+export const updateEmployeeSchema = z
+  .object({
+    email: z.string().trim().email().transform((value) => value.toLowerCase()).optional(),
+    employeeCode: z.string().trim().min(2).max(50).transform((value) => value.toUpperCase()).optional(),
+    firstName: z.string().trim().min(1).max(100).optional(),
+    middleName: optionalText,
+    lastName: z.string().trim().min(1).max(100).optional(),
+    phone: optionalText,
+    jobTitle: optionalText,
+    departmentId: z.string().uuid().optional().nullable(),
+    evaluationTemplateId: z.string().uuid().optional().nullable(),
+    employmentStartDate: z.coerce.date().optional(),
+    birthDate: optionalBirthDate.optional(),
+    officeId: z.string().uuid().optional().nullable(),
+    scheduleId: z.string().uuid().optional().nullable(),
+    supervisorId: z.string().uuid().optional().nullable()
+  })
+  .refine((value) => Object.keys(value).length > 0, "At least one field is required");
 
 export const employeeStatusSchema = z.object({
   employeeStatus,
@@ -100,15 +88,41 @@ export const resetPasswordSchema = z.object({
 
 export const employeeParamsSchema = z.object({ employeeId: z.string().uuid() });
 
-export const updateEmergencyContactSchema = z
+export const emergencyContactBodySchema = z
   .object({
-    emergencyContactName: optionalText,
-    emergencyContactPhone: optionalText,
-    emergencyContactRelation: optionalEmergencyContactRelation,
-    emergencyContactRelationOther: optionalText
+    name: z.string().trim().min(1).max(100),
+    phone: z.string().trim().min(1).max(40),
+    relation: emergencyContactRelation,
+    relationOther: optionalText
+  })
+  .superRefine(refineRelationOther);
+
+export const emergencyContactUpdateSchema = z
+  .object({
+    name: z.string().trim().min(1).max(100).optional(),
+    phone: z.string().trim().min(1).max(40).optional(),
+    relation: emergencyContactRelation.optional(),
+    relationOther: optionalText
   })
   .refine((value) => Object.keys(value).length > 0, "At least one field is required")
-  .superRefine(refineEmergencyRelationOther);
+  .superRefine((value, ctx) => {
+    if (value.relation === "OTHER") {
+      const other = value.relationOther?.trim();
+      if (!other) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["relationOther"],
+          message: "Specify the relationship when Other is selected"
+        });
+      }
+    }
+  });
+
+export const emergencyContactParamsSchema = z.object({ contactId: z.string().uuid() });
+export const adminEmergencyContactParamsSchema = z.object({
+  employeeId: z.string().uuid(),
+  contactId: z.string().uuid()
+});
 
 export const employeeListSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),

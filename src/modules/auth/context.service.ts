@@ -29,7 +29,8 @@ async function loadUser(userId: string) {
         include: {
           organization: true,
           office: { select: { id: true, name: true, timezone: true } },
-          schedule: { select: { timezone: true } }
+          schedule: { select: { timezone: true } },
+          emergencyContacts: { orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] }
         }
       }
     }
@@ -172,10 +173,14 @@ export type ScopedIdentity = {
     displayName: string;
     birthDate: string | null;
     isBirthdayToday: boolean;
-    emergencyContactName: string | null;
-    emergencyContactPhone: string | null;
-    emergencyContactRelation: string | null;
-    emergencyContactRelationOther: string | null;
+    emergencyContacts: Array<{
+      id: string;
+      name: string;
+      phone: string;
+      relation: string;
+      relationOther: string | null;
+      sortOrder: number;
+    }>;
   } | null;
   activeContext: ActiveContext;
 };
@@ -236,10 +241,14 @@ export async function resolveScopedIdentity(userId: string, contextKey: string):
         displayName: buildEmployeeDisplayName(employeeRecord.firstName, employeeRecord.lastName, user.email),
         birthDate: employeeRecord.birthDate ? employeeRecord.birthDate.toISOString().slice(0, 10) : null,
         isBirthdayToday: isBirthdayOnDate(employeeRecord.birthDate, DateTime.now(), employeeZone),
-        emergencyContactName: employeeRecord.emergencyContactName,
-        emergencyContactPhone: employeeRecord.emergencyContactPhone,
-        emergencyContactRelation: employeeRecord.emergencyContactRelation,
-        emergencyContactRelationOther: employeeRecord.emergencyContactRelationOther
+        emergencyContacts: (employeeRecord.emergencyContacts ?? []).map((contact) => ({
+          id: contact.id,
+          name: contact.name,
+          phone: contact.phone,
+          relation: contact.relation,
+          relationOther: contact.relation === "OTHER" ? contact.relationOther : null,
+          sortOrder: contact.sortOrder
+        }))
       }
     : null;
 

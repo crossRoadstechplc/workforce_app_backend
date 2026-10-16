@@ -515,10 +515,6 @@ model Employee {
   middleName            String?             @map("middle_name")
   lastName              String              @map("last_name")
   phone                 String?
-  emergencyContactName           String?                     @map("emergency_contact_name")
-  emergencyContactPhone          String?                     @map("emergency_contact_phone")
-  emergencyContactRelation       EmergencyContactRelation?   @map("emergency_contact_relation")
-  emergencyContactRelationOther  String?                     @map("emergency_contact_relation_other")
   jobTitle              String?             @map("job_title")
   employmentStartDate   DateTime            @map("employment_start_date") @db.Date
   birthDate             DateTime?           @map("birth_date") @db.Date
@@ -534,6 +530,7 @@ model Employee {
   evaluationTemplate  EvaluationTemplate? @relation(fields: [evaluationTemplateId], references: [id], onDelete: SetNull)
   supervisor          Employee?           @relation("EmployeeSupervisor", fields: [supervisorId], references: [id], onDelete: SetNull)
   directReports       Employee[]     @relation("EmployeeSupervisor")
+  emergencyContacts   EmployeeEmergencyContact[]
   timesheets          Timesheet[]
   worksheets          Worksheet[]
   lateReasons         LateReason[]
@@ -557,6 +554,22 @@ model Employee {
   @@index([status, officeId])
   @@index([supervisorId])
   @@map("employees")
+}
+
+model EmployeeEmergencyContact {
+  id            String                     @id @default(uuid()) @db.Uuid
+  employeeId    String                     @map("employee_id") @db.Uuid
+  name          String
+  phone         String
+  relation      EmergencyContactRelation
+  relationOther String?                    @map("relation_other")
+  sortOrder     Int                        @default(0) @map("sort_order")
+  createdAt     DateTime                   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime                   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  employee      Employee                   @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId, sortOrder])
+  @@map("employee_emergency_contacts")
 }
 
 model Invite {
