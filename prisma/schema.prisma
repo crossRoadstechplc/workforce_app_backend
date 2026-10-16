@@ -19,6 +19,18 @@ enum EmployeeStatus {
   TERMINATED
 }
 
+enum EmergencyContactRelation {
+  MOTHER
+  FATHER
+  BROTHER
+  SISTER
+  SPOUSE
+  CHILD
+  FRIEND
+  RELATIVE
+  OTHER
+}
+
 enum TokenType {
   REFRESH
 }
@@ -503,8 +515,10 @@ model Employee {
   middleName            String?             @map("middle_name")
   lastName              String              @map("last_name")
   phone                 String?
-  emergencyContactName  String?             @map("emergency_contact_name")
-  emergencyContactPhone String?             @map("emergency_contact_phone")
+  emergencyContactName           String?                     @map("emergency_contact_name")
+  emergencyContactPhone          String?                     @map("emergency_contact_phone")
+  emergencyContactRelation       EmergencyContactRelation?   @map("emergency_contact_relation")
+  emergencyContactRelationOther  String?                     @map("emergency_contact_relation_other")
   jobTitle              String?             @map("job_title")
   employmentStartDate   DateTime            @map("employment_start_date") @db.Date
   birthDate             DateTime?           @map("birth_date") @db.Date

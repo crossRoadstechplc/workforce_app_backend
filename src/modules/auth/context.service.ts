@@ -174,6 +174,8 @@ export type ScopedIdentity = {
     isBirthdayToday: boolean;
     emergencyContactName: string | null;
     emergencyContactPhone: string | null;
+    emergencyContactRelation: string | null;
+    emergencyContactRelationOther: string | null;
   } | null;
   activeContext: ActiveContext;
 };
@@ -235,7 +237,9 @@ export async function resolveScopedIdentity(userId: string, contextKey: string):
         birthDate: employeeRecord.birthDate ? employeeRecord.birthDate.toISOString().slice(0, 10) : null,
         isBirthdayToday: isBirthdayOnDate(employeeRecord.birthDate, DateTime.now(), employeeZone),
         emergencyContactName: employeeRecord.emergencyContactName,
-        emergencyContactPhone: employeeRecord.emergencyContactPhone
+        emergencyContactPhone: employeeRecord.emergencyContactPhone,
+        emergencyContactRelation: employeeRecord.emergencyContactRelation,
+        emergencyContactRelationOther: employeeRecord.emergencyContactRelationOther
       }
     : null;
 

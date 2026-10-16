@@ -51,6 +51,8 @@ type CreateEmployeeInput = {
   phone?: string | null;
   emergencyContactName?: string | null;
   emergencyContactPhone?: string | null;
+  emergencyContactRelation?: "MOTHER" | "FATHER" | "BROTHER" | "SISTER" | "SPOUSE" | "CHILD" | "FRIEND" | "RELATIVE" | "OTHER" | null;
+  emergencyContactRelationOther?: string | null;
   jobTitle?: string | null;
   departmentId?: string | null;
   evaluationTemplateId?: string | null;
@@ -155,6 +157,8 @@ export const employeeService = {
             phone: input.phone,
             emergencyContactName: input.emergencyContactName,
             emergencyContactPhone: input.emergencyContactPhone,
+            emergencyContactRelation: input.emergencyContactRelation,
+            emergencyContactRelationOther: input.emergencyContactRelation === "OTHER" ? input.emergencyContactRelationOther : null,
             jobTitle: input.jobTitle,
             departmentId: input.departmentId,
             evaluationTemplateId: input.evaluationTemplateId,
@@ -224,6 +228,8 @@ export const employeeService = {
               phone: input.phone,
               emergencyContactName: input.emergencyContactName,
               emergencyContactPhone: input.emergencyContactPhone,
+              emergencyContactRelation: input.emergencyContactRelation,
+              emergencyContactRelationOther: input.emergencyContactRelation === "OTHER" ? input.emergencyContactRelationOther : null,
               jobTitle: input.jobTitle,
               departmentId: input.departmentId,
               evaluationTemplateId: input.evaluationTemplateId,
@@ -327,6 +333,8 @@ export const employeeService = {
       phone?: string | null;
       emergencyContactName?: string | null;
       emergencyContactPhone?: string | null;
+      emergencyContactRelation?: "MOTHER" | "FATHER" | "BROTHER" | "SISTER" | "SPOUSE" | "CHILD" | "FRIEND" | "RELATIVE" | "OTHER" | null;
+      emergencyContactRelationOther?: string | null;
       jobTitle?: string | null;
       departmentId?: string | null;
       evaluationTemplateId?: string | null;
@@ -353,7 +361,13 @@ export const employeeService = {
       if (input.email && input.email !== current.user.email) {
         await tx.user.update({ where: { id: current.userId }, data: { email: input.email as string } });
       }
-      const { email: _email, ...employeeData } = input;
+      const { email: _email, ...rest } = input;
+      const employeeData = {
+        ...rest,
+        ...(input.emergencyContactRelation !== undefined && input.emergencyContactRelation !== "OTHER"
+          ? { emergencyContactRelationOther: null }
+          : {})
+      };
       const updated = await tx.employee.update({ where: { id: employeeId }, data: employeeData, include: employeeInclude });
       if (input.employmentStartDate && ymd(input.employmentStartDate) !== ymd(current.employmentStartDate)) {
         await annualLeaveService.rebuild(tx, employeeId);
@@ -445,7 +459,12 @@ export const employeeService = {
 
   async updateEmergencyContact(
     userId: string,
-    input: { emergencyContactName?: string | null; emergencyContactPhone?: string | null },
+    input: {
+      emergencyContactName?: string | null;
+      emergencyContactPhone?: string | null;
+      emergencyContactRelation?: "MOTHER" | "FATHER" | "BROTHER" | "SISTER" | "SPOUSE" | "CHILD" | "FRIEND" | "RELATIVE" | "OTHER" | null;
+      emergencyContactRelationOther?: string | null;
+    },
     audit: AuditContext
   ) {
     const employee = await prisma.employee.findUnique({
@@ -456,12 +475,22 @@ export const employeeService = {
       throw new AppError(403, "EMPLOYEE_INACTIVE", "Active employee account required");
     }
 
+    const relation = input.emergencyContactRelation;
+    const relationOther =
+      relation === undefined
+        ? undefined
+        : relation === "OTHER"
+          ? input.emergencyContactRelationOther ?? null
+          : null;
+
     const updated = await prisma.$transaction(async (tx) => {
       const next = await tx.employee.update({
         where: { id: employee.id },
         data: {
           ...(input.emergencyContactName !== undefined ? { emergencyContactName: input.emergencyContactName } : {}),
-          ...(input.emergencyContactPhone !== undefined ? { emergencyContactPhone: input.emergencyContactPhone } : {})
+          ...(input.emergencyContactPhone !== undefined ? { emergencyContactPhone: input.emergencyContactPhone } : {}),
+          ...(relation !== undefined ? { emergencyContactRelation: relation } : {}),
+          ...(relationOther !== undefined ? { emergencyContactRelationOther: relationOther } : {})
         }
       });
       await tx.auditLog.create({
@@ -472,11 +501,15 @@ export const employeeService = {
           entityId: employee.id,
           oldValues: {
             emergencyContactName: employee.emergencyContactName,
-            emergencyContactPhone: employee.emergencyContactPhone
+            emergencyContactPhone: employee.emergencyContactPhone,
+            emergencyContactRelation: employee.emergencyContactRelation,
+            emergencyContactRelationOther: employee.emergencyContactRelationOther
           },
           newValues: {
             emergencyContactName: next.emergencyContactName,
-            emergencyContactPhone: next.emergencyContactPhone
+            emergencyContactPhone: next.emergencyContactPhone,
+            emergencyContactRelation: next.emergencyContactRelation,
+            emergencyContactRelationOther: next.emergencyContactRelationOther
           },
           ipAddress: audit.ipAddress,
           userAgent: audit.userAgent
@@ -487,7 +520,9 @@ export const employeeService = {
 
     return {
       emergencyContactName: updated.emergencyContactName,
-      emergencyContactPhone: updated.emergencyContactPhone
+      emergencyContactPhone: updated.emergencyContactPhone,
+      emergencyContactRelation: updated.emergencyContactRelation,
+      emergencyContactRelationOther: updated.emergencyContactRelationOther
     };
   }
 };
