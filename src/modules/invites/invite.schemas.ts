@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { easyPasswordSchema } from "../../shared/password.js";
+import { emergencyContactBodySchema } from "../employees/employee.schemas.js";
+import { MAX_EMERGENCY_CONTACTS } from "../employees/emergency-contact.service.js";
 
 export const invitePasswordSchema = easyPasswordSchema;
 
@@ -36,7 +38,8 @@ export const acceptEmployeeSchema = z.object({
   ),
   officeId: z.string().uuid().optional().nullable(),
   scheduleId: z.string().uuid().optional().nullable(),
-  password: invitePasswordSchema.optional()
+  password: invitePasswordSchema.optional(),
+  emergencyContacts: z.array(emergencyContactBodySchema).max(MAX_EMERGENCY_CONTACTS).optional().default([])
 });
 
 export const createEmployeeInviteSchema = z.object({

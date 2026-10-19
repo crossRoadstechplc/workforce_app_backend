@@ -9,6 +9,10 @@ import { pageMeta, pagination } from "../../shared/pagination.js";
 import { isOfficeAdmin, isOrgAdmin, isSuperAdmin, type AuthContext } from "../../shared/tenancy.js";
 import { assertOfficeInScope, getOfficeScope, type OfficeScope } from "../../shared/office-scope.js";
 import { employeeService } from "../employees/employee.service.js";
+import {
+  emergencyContactService,
+  type EmergencyContactInput
+} from "../employees/emergency-contact.service.js";
 import { logger } from "../../config/logger.js";
 import { sendMail } from "../mail/mailer.js";
 import { employeeInviteEmail, officeAdminInviteEmail, orgAdminInviteEmail } from "../mail/templates.js";
@@ -307,6 +311,7 @@ export const inviteService = {
     officeId?: string | null;
     scheduleId?: string | null;
     password?: string;
+    emergencyContacts?: EmergencyContactInput[];
   }) {
     const invite = await loadUsableInvite(token);
     if (invite.type !== "EMPLOYEE") throw new AppError(400, "INVITE_TYPE_MISMATCH", "This invite is not an employee invite");
@@ -356,6 +361,11 @@ export const inviteService = {
       { actorUserId: invite.invitedByUserId },
       { allOffices: true, officeIds: [] }
     );
+
+    const audit: AuditContext = { actorUserId: invite.invitedByUserId };
+    for (const contact of input.emergencyContacts ?? []) {
+      await emergencyContactService.createForEmployee(created.employee.id, contact, audit);
+    }
 
     await prisma.invite.update({
       where: { id: invite.id },
