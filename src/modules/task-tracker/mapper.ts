@@ -1,7 +1,12 @@
 import { prisma } from "../../database/prisma.js";
 import { PERMISSION_ROLE_FROM_DB, PERMISSION_ROLE_LABELS, TASK_STATUS_FROM_DB, type TtPermissionRoleDb, type TtTaskStatusDb } from "./roles.js";
 import { syncWorkforceStaffToWorkspace } from "./staff-sync.service.js";
-import { getAccessibleProjectIds, type WorkspaceViewer } from "./visibility.js";
+import {
+  canSeeAllTasks,
+  getAccessibleProjectIds,
+  isTaskVisibleToViewer,
+  type WorkspaceViewer
+} from "./visibility.js";
 import type {
   ArchivedTask,
   DeletedTask,
@@ -217,29 +222,70 @@ export async function getLegacyWorkspaceData(
       : workspace.projects.filter((project) => accessibleProjectIds.has(project.id));
 
   const visibleProjectNames = new Set(visibleProjects.map((project) => project.name));
+  const projectLeaderById = new Map(
+    visibleProjects.map((project) => [project.id, project.leaderId ?? null] as const)
+  );
+  const projectLeaderByName = new Map(
+    visibleProjects.map((project) => [project.name, project.leaderId ?? null] as const)
+  );
 
-  const visibleTasks =
-    accessibleProjectIds === null
-      ? workspace.tasks
-      : workspace.tasks.filter((task) => accessibleProjectIds.has(task.projectId));
+  const taskVisibleForViewer = (input: {
+    projectId?: string | null;
+    teamName?: string;
+    ownerStaffMemberIds: string[];
+  }) => {
+    if (!viewer || canSeeAllTasks(viewer.permissionRole)) return true;
+    const projectLeaderId =
+      (input.projectId ? projectLeaderById.get(input.projectId) : undefined) ??
+      (input.teamName ? projectLeaderByName.get(input.teamName) : undefined) ??
+      null;
+    return isTaskVisibleToViewer({
+      viewerStaffMemberId: viewer.staffMemberId,
+      viewerRole: viewer.permissionRole,
+      ownerStaffMemberIds: input.ownerStaffMemberIds,
+      projectLeaderId
+    });
+  };
 
-  const visibleDeletedTasks =
-    accessibleProjectIds === null
-      ? workspace.deletedTasks
-      : workspace.deletedTasks.filter((entry) => {
-          const payload = entry.payload as Record<string, unknown>;
-          const team = typeof payload.team === "string" ? payload.team : "";
-          return team && visibleProjectNames.has(team);
-        });
+  const visibleTasks = workspace.tasks.filter((task) => {
+    if (accessibleProjectIds !== null && !accessibleProjectIds.has(task.projectId)) return false;
+    return taskVisibleForViewer({
+      projectId: task.projectId,
+      ownerStaffMemberIds: task.owners.map((owner) => owner.staffMemberId)
+    });
+  });
 
-  const visibleArchivedTasks =
-    accessibleProjectIds === null
-      ? workspace.archivedTasks
-      : workspace.archivedTasks.filter((entry) => {
-          const payload = entry.payload as Record<string, unknown>;
-          const team = typeof payload.team === "string" ? payload.team : "";
-          return team && visibleProjectNames.has(team);
-        });
+  const ownerNamesFromPayload = (payload: Record<string, unknown>) => {
+    if (Array.isArray(payload.owners)) {
+      return payload.owners.filter((name): name is string => typeof name === "string" && Boolean(name.trim()));
+    }
+    if (typeof payload.owner === "string" && payload.owner.trim()) return [payload.owner.trim()];
+    return [] as string[];
+  };
+
+  const staffIdByDisplayName = new Map(
+    workspace.staffMembers.map((member) => [member.displayName, member.id] as const)
+  );
+
+  const visibleDeletedTasks = workspace.deletedTasks.filter((entry) => {
+    const payload = entry.payload as Record<string, unknown>;
+    const team = typeof payload.team === "string" ? payload.team : "";
+    if (!team || !visibleProjectNames.has(team)) return false;
+    const ownerStaffMemberIds = ownerNamesFromPayload(payload)
+      .map((name) => staffIdByDisplayName.get(name))
+      .filter((id): id is string => Boolean(id));
+    return taskVisibleForViewer({ teamName: team, ownerStaffMemberIds });
+  });
+
+  const visibleArchivedTasks = workspace.archivedTasks.filter((entry) => {
+    const payload = entry.payload as Record<string, unknown>;
+    const team = typeof payload.team === "string" ? payload.team : "";
+    if (!team || !visibleProjectNames.has(team)) return false;
+    const ownerStaffMemberIds = ownerNamesFromPayload(payload)
+      .map((name) => staffIdByDisplayName.get(name))
+      .filter((id): id is string => Boolean(id));
+    return taskVisibleForViewer({ teamName: team, ownerStaffMemberIds });
+  });
 
   const visibleScheduleEvents =
     accessibleProjectIds === null

@@ -95,7 +95,11 @@ export async function publishWorkspaceEvent(
       type: event.type,
       resource: event.resource,
       resourceId: event.resourceId,
-      payload: event.payload as object,
+      // Envelope keeps visibility metadata for catch-up without a schema migration.
+      payload: {
+        data: event.payload,
+        visibleToStaffIds: event.visibleToStaffIds ?? null
+      } as object,
       actorUserId: event.actorUserId,
       actorClientId: event.actorClientId
     }
@@ -183,14 +187,39 @@ export async function getEventsAfterRevision(
     take: limit
   });
 
-  return rows.map((row) => ({
-    type: row.type as WorkspaceEventPayload["type"],
-    workspaceId: row.workspaceId,
-    revision: row.revision,
-    actorUserId: row.actorUserId,
-    actorClientId: row.actorClientId,
-    resource: row.resource,
-    resourceId: row.resourceId,
-    payload: row.payload
-  }));
+  return rows.map((row) => {
+    const stored = row.payload as { data?: unknown; visibleToStaffIds?: string[] | null } | unknown;
+    const isEnvelope =
+      stored &&
+      typeof stored === "object" &&
+      !Array.isArray(stored) &&
+      "data" in stored &&
+      "visibleToStaffIds" in stored;
+
+    if (isEnvelope) {
+      const envelope = stored as { data: unknown; visibleToStaffIds?: string[] | null };
+      return {
+        type: row.type as WorkspaceEventPayload["type"],
+        workspaceId: row.workspaceId,
+        revision: row.revision,
+        actorUserId: row.actorUserId,
+        actorClientId: row.actorClientId,
+        resource: row.resource,
+        resourceId: row.resourceId,
+        payload: envelope.data,
+        visibleToStaffIds: envelope.visibleToStaffIds ?? null
+      };
+    }
+
+    return {
+      type: row.type as WorkspaceEventPayload["type"],
+      workspaceId: row.workspaceId,
+      revision: row.revision,
+      actorUserId: row.actorUserId,
+      actorClientId: row.actorClientId,
+      resource: row.resource,
+      resourceId: row.resourceId,
+      payload: row.payload
+    };
+  });
 }

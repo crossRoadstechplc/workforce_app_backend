@@ -31,6 +31,11 @@ export type WorkspaceEventPayload = {
   resource: string;
   resourceId: string | null;
   payload: unknown;
+  /**
+   * When set, only these staff members (plus Admin/Super Admin subscribers)
+   * receive the event. Null/undefined = all workspace subscribers.
+   */
+  visibleToStaffIds?: string[] | null;
 };
 
 export const NOTIFY_CHANNEL = "tt_workspace_events";
@@ -38,6 +43,8 @@ export const NOTIFY_CHANNEL = "tt_workspace_events";
 export type SseSubscriber = {
   workspaceId: string;
   afterRevision: number;
+  staffMemberId?: string;
+  canSeeAllTasks?: boolean;
   enqueue: (event: WorkspaceEventPayload) => void;
   close: () => void;
 };
@@ -51,10 +58,24 @@ export function subscribe(subscriber: SseSubscriber): () => void {
   };
 }
 
+function subscriberMayReceive(subscriber: SseSubscriber, event: WorkspaceEventPayload): boolean {
+  if (!event.visibleToStaffIds || event.visibleToStaffIds.length === 0) {
+    // Empty array means "nobody except admins" for unassigned-with-no-leader edge cases.
+    if (Array.isArray(event.visibleToStaffIds) && event.visibleToStaffIds.length === 0) {
+      return Boolean(subscriber.canSeeAllTasks);
+    }
+    return true;
+  }
+  if (subscriber.canSeeAllTasks) return true;
+  if (!subscriber.staffMemberId) return true;
+  return event.visibleToStaffIds.includes(subscriber.staffMemberId);
+}
+
 export function fanOut(event: WorkspaceEventPayload): void {
   for (const subscriber of subscribers) {
     if (subscriber.workspaceId !== event.workspaceId) continue;
     if (event.revision <= subscriber.afterRevision) continue;
+    if (!subscriberMayReceive(subscriber, event)) continue;
     subscriber.enqueue(event);
   }
 }

@@ -15,13 +15,37 @@ import {
   assertProjectAccess,
   assertTaskAccess,
   assertTrashAccess,
-  ensureProjectMembers
+  ensureProjectMembers,
+  taskEventRecipientStaffIds
 } from "./visibility.js";
 
 export function viewerFromActor(actor: ActorContext) {
   return {
     staffMemberId: actor.staffMemberId,
     permissionRole: actor.permissionRole
+  };
+}
+
+async function visibleStaffIdsForProjectOwners(
+  projectId: string,
+  ownerStaffMemberIds: string[]
+): Promise<string[]> {
+  const project = await prisma.ttProject.findUnique({
+    where: { id: projectId },
+    select: { leaderId: true }
+  });
+  return taskEventRecipientStaffIds(ownerStaffMemberIds, project?.leaderId);
+}
+
+async function ownerIdsForTask(taskId: string): Promise<{ projectId: string; ownerIds: string[] }> {
+  const task = await prisma.ttTask.findUnique({
+    where: { id: taskId },
+    select: { projectId: true, owners: { select: { staffMemberId: true } } }
+  });
+  if (!task) return { projectId: "", ownerIds: [] };
+  return {
+    projectId: task.projectId,
+    ownerIds: task.owners.map((owner) => owner.staffMemberId)
   };
 }
 
@@ -94,7 +118,8 @@ export async function createTask(input: {
     actorClientId: input.actor.clientId ?? null,
     resource: "task",
     resourceId: taskId,
-    payload: task
+    payload: task,
+    visibleToStaffIds: await visibleStaffIdsForProjectOwners(projectId, ownerIds)
   });
 
   const actorStaffId = await resolveActorStaffId(workspaceId, input.actor.userId);
@@ -176,6 +201,10 @@ export async function updateTask(input: {
   const task = await loadTaskLegacy(input.taskId, workspaceId);
   if (!task) throw new AppError(500, "TASK_LOAD_FAILED", "Could not load updated task.");
 
+  // Include previous owners so reassignment recipients who lost the task still get the event / reload.
+  const publishOwnerIds = [
+    ...new Set([...(nextOwnerIds ?? [...previousOwnerIds]), ...previousOwnerIds])
+  ];
   const event = await publishWorkspaceEvent({
     type: "task.updated",
     workspaceId,
@@ -183,7 +212,8 @@ export async function updateTask(input: {
     actorClientId: input.actor.clientId ?? null,
     resource: "task",
     resourceId: input.taskId,
-    payload: task
+    payload: task,
+    visibleToStaffIds: await visibleStaffIdsForProjectOwners(projectId, publishOwnerIds)
   });
 
   if (nextOwnerIds) {
@@ -229,6 +259,7 @@ export async function moveTask(input: {
   const task = await loadTaskLegacy(input.taskId, workspaceId);
   if (!task) throw new AppError(500, "TASK_LOAD_FAILED", "Could not load moved task.");
 
+  const { projectId, ownerIds } = await ownerIdsForTask(input.taskId);
   const event = await publishWorkspaceEvent({
     type: "task.moved",
     workspaceId,
@@ -236,7 +267,8 @@ export async function moveTask(input: {
     actorClientId: input.actor.clientId ?? null,
     resource: "task",
     resourceId: input.taskId,
-    payload: { task, status: input.status, sortOrder }
+    payload: { task, status: input.status, sortOrder },
+    visibleToStaffIds: await visibleStaffIdsForProjectOwners(projectId, ownerIds)
   });
 
   return { task, revision: event.revision };
@@ -266,6 +298,7 @@ export async function addTaskUpdate(input: {
   const task = await loadTaskLegacy(input.taskId, workspaceId);
   if (!task) throw new AppError(500, "TASK_LOAD_FAILED", "Could not load task.");
 
+  const { projectId, ownerIds } = await ownerIdsForTask(input.taskId);
   const event = await publishWorkspaceEvent({
     type: "task.update.added",
     workspaceId,
@@ -273,7 +306,8 @@ export async function addTaskUpdate(input: {
     actorClientId: input.actor.clientId ?? null,
     resource: "task",
     resourceId: input.taskId,
-    payload: task
+    payload: task,
+    visibleToStaffIds: await visibleStaffIdsForProjectOwners(projectId, ownerIds)
   });
 
   return { task, revision: event.revision };
@@ -311,6 +345,11 @@ export async function deleteTask(input: {
     await tx.ttTask.delete({ where: { id: input.taskId } });
   });
 
+  const { nameToId } = await buildStaffDisplayNameMap(workspaceId);
+  const ownerIds = normalizeOwners(payload.owners ?? payload.owner)
+    .map((name) => nameToId.get(name))
+    .filter((id): id is string => Boolean(id));
+  const projectId = await getProjectIdByName(workspaceId, payload.team ?? "");
   const event = await publishWorkspaceEvent({
     type: "task.deleted",
     workspaceId,
@@ -318,7 +357,10 @@ export async function deleteTask(input: {
     actorClientId: input.actor.clientId ?? null,
     resource: "task",
     resourceId: input.taskId,
-    payload: { trashId, task: payload }
+    payload: { trashId, task: payload },
+    visibleToStaffIds: projectId
+      ? await visibleStaffIdsForProjectOwners(projectId, ownerIds)
+      : ownerIds
   });
 
   return { trashId, revision: event.revision };
@@ -354,6 +396,11 @@ export async function archiveTask(input: {
     await tx.ttTask.delete({ where: { id: input.taskId } });
   });
 
+  const { nameToId: archiveNameToId } = await buildStaffDisplayNameMap(workspaceId);
+  const archiveOwnerIds = normalizeOwners(payload.owners ?? payload.owner)
+    .map((name) => archiveNameToId.get(name))
+    .filter((id): id is string => Boolean(id));
+  const archiveProjectId = await getProjectIdByName(workspaceId, payload.team ?? "");
   const event = await publishWorkspaceEvent({
     type: "task.archived",
     workspaceId,
@@ -361,7 +408,10 @@ export async function archiveTask(input: {
     actorClientId: input.actor.clientId ?? null,
     resource: "task",
     resourceId: input.taskId,
-    payload: { archivedId, task: payload }
+    payload: { archivedId, task: payload },
+    visibleToStaffIds: archiveProjectId
+      ? await visibleStaffIdsForProjectOwners(archiveProjectId, archiveOwnerIds)
+      : archiveOwnerIds
   });
 
   return { archivedId, revision: event.revision };
@@ -441,7 +491,8 @@ export async function restoreTrashTask(input: {
     actorClientId: input.actor.clientId ?? null,
     resource: "task",
     resourceId: taskId,
-    payload: task
+    payload: task,
+    visibleToStaffIds: await visibleStaffIdsForProjectOwners(projectId, ownerIds)
   });
 
   return { task, revision: event.revision };

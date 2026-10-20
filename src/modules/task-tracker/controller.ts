@@ -2,7 +2,7 @@ import type { RequestHandler } from "express";
 import { AppError } from "../../shared/errors/app-error.js";
 import { requireOrganizationId } from "../../shared/tenancy.js";
 import { applyPermittedWorkspaceUpdate } from "./permissions.js";
-import { canSeeAllProjects } from "./visibility.js";
+import { canSeeAllProjects, canSeeAllTasks } from "./visibility.js";
 import { getLegacyWorkspaceData } from "./mapper.js";
 import { enablementService } from "./enablement.service.js";
 import {
@@ -527,15 +527,25 @@ export const getEvents: RequestHandler = async (req, res, next) => {
     const currentRevision = await getWorkspaceRevision(actor.workspaceId);
     enqueue(`: connected revision=${currentRevision}\n\n`);
 
+    const seeAllTasks = canSeeAllTasks(actor.permissionRole);
     const missed = await getEventsAfterRevision(
       actor.workspaceId,
       Number.isFinite(afterRevision) ? afterRevision : 0
     );
-    for (const event of missed) enqueue(formatSse(event));
+    for (const event of missed) {
+      const ids = event.visibleToStaffIds;
+      if (Array.isArray(ids)) {
+        if (ids.length === 0 && !seeAllTasks) continue;
+        if (ids.length > 0 && !seeAllTasks && !ids.includes(actor.staffMemberId)) continue;
+      }
+      enqueue(formatSse(event));
+    }
 
     const unsubscribe = subscribe({
       workspaceId: actor.workspaceId,
       afterRevision: Number.isFinite(afterRevision) ? afterRevision : 0,
+      staffMemberId: actor.staffMemberId,
+      canSeeAllTasks: seeAllTasks,
       enqueue: (event) => enqueue(formatSse(event)),
       close: () => {
         if (!closed) res.end();

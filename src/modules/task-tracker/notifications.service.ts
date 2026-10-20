@@ -1,4 +1,5 @@
 import { prisma } from "../../database/prisma.js";
+import { emitToUser } from "../../realtime/socket.server.js";
 import { publishWorkspaceEvent } from "./events/notify.js";
 import type { NotificationRecord } from "./types.js";
 
@@ -124,7 +125,7 @@ export async function createAssignmentNotifications(input: {
       workspaceId: input.workspaceId,
       id: { in: input.recipientIds }
     },
-    select: { id: true }
+    select: { id: true, userId: true }
   });
 
   for (const recipient of recipients) {
@@ -149,8 +150,15 @@ export async function createAssignmentNotifications(input: {
       actorClientId: input.actorClientId ?? null,
       resource: "notification",
       resourceId: notification.id,
-      payload: notification
+      payload: notification,
+      // Only the recipient's tracker SSE session should receive this.
+      visibleToStaffIds: [recipient.id]
     });
+
+    // Reuse workforce Socket.IO so admin/employee apps get live alerts too.
+    if (recipient.userId) {
+      emitToUser(recipient.userId, "notification.created", notification);
+    }
   }
 }
 
