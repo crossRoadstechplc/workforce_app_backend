@@ -374,6 +374,9 @@ export async function archiveTask(input: {
   await assertTaskAccess(workspaceId, input.taskId, viewerFromActor(input.actor));
   const task = await loadTaskLegacy(input.taskId, workspaceId);
   if (!task) throw new AppError(404, "TASK_NOT_FOUND", "Task not found.");
+  if (task.status !== "Done") {
+    throw new AppError(400, "TASK_NOT_ARCHIVABLE", "Only completed tasks can be archived.");
+  }
 
   const archivedId = randomUUID();
   const payload = {

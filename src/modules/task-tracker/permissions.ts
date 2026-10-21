@@ -19,6 +19,7 @@ export type PermissionActionId =
   | "tasks.edit"
   | "tasks.move"
   | "tasks.delete"
+  | "tasks.archive"
   | "tasks.addUpdate"
   | "trash.restore"
   | "projects.create"
@@ -47,6 +48,10 @@ export function can(
   matrix: WorkspaceData["permissionMatrix"]
 ): boolean {
   if (role === "Super Admin") return true;
+  if (actionId === "tasks.archive") {
+    if (matrix[role]?.["tasks.archive"]) return true;
+    return Boolean(matrix[role]?.["tasks.delete"] || matrix[role]?.["tasks.move"]);
+  }
   return Boolean(matrix[role]?.[actionId]);
 }
 
@@ -319,8 +324,8 @@ export function applyPermittedWorkspaceUpdate(input: {
       existing.archivedTasks,
       incoming.archivedTasks,
       (item) => item.archivedId,
-      allowed("tasks.delete"),
-      allowed("tasks.delete")
+      allowed("tasks.archive") || allowed("tasks.delete"),
+      allowed("tasks.archive") || allowed("tasks.delete")
     ),
     staff: staff.staff,
     staffProfiles: staff.staffProfiles,

@@ -83,7 +83,7 @@ taskTrackerRouter.patch("/tasks/:id", requireTrackerPermission("tasks.edit"), va
 taskTrackerRouter.delete("/tasks/:id", requireTrackerPermission("tasks.delete"), validate(taskIdSchema), removeTask);
 taskTrackerRouter.post("/tasks/:id/updates", requireTrackerPermission("tasks.addUpdate"), validate(addUpdateSchema), postTaskUpdate);
 taskTrackerRouter.post("/tasks/:id/move", requireTrackerPermission("tasks.move"), validate(moveTaskSchema), postMoveTask);
-taskTrackerRouter.post("/tasks/:id/archive", requireTrackerPermission("tasks.delete"), validate(taskIdSchema), postArchiveTask);
+taskTrackerRouter.post("/tasks/:id/archive", requireTrackerPermission("tasks.archive"), validate(taskIdSchema), postArchiveTask);
 taskTrackerRouter.post("/trash/:trashId/restore", requireTrackerPermission("trash.restore"), validate(restoreTrashSchema), postRestoreTrash);
 
 taskTrackerRouter.post("/projects", requireTrackerPermission("projects.create"), validate(createProjectSchema), postProject);
