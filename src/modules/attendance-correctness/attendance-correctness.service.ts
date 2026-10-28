@@ -122,8 +122,28 @@ async function orgAdminUserIds(organizationId: string) {
   return users.map((x) => x.id);
 }
 
+export function submissionKey(row: { id: string; submissionId: string | null }) {
+  return row.submissionId ?? row.id;
+}
+
+function submissionDateLabel(workDateKeys: string[]) {
+  const sorted = [...workDateKeys].sort();
+  if (!sorted.length) return "";
+  if (sorted.length === 1) return sorted[0]!;
+  return `${sorted[0]} – ${sorted[sorted.length - 1]!} (${sorted.length} days)`;
+}
+
+export function aggregateSubmissionStatus(statuses: string[]) {
+  if (statuses.some((s) => s === "PENDING")) return "PENDING";
+  if (statuses.every((s) => s === "APPROVED")) return "APPROVED";
+  if (statuses.every((s) => s === "REJECTED")) return "REJECTED";
+  if (statuses.every((s) => s === "CANCELLED")) return "CANCELLED";
+  return "PARTIAL";
+}
+
 function serializeRequest(row: {
   id: string;
+  submissionId?: string | null;
   workDate: Date;
   session?: LeaveDaySession | string | null;
   status: string;
@@ -136,6 +156,7 @@ function serializeRequest(row: {
 }) {
   return {
     id: row.id,
+    submissionId: submissionKey({ id: row.id, submissionId: row.submissionId ?? null }),
     workDate: formatWorkDateKey(row.workDate),
     session: (row.session as LeaveDaySession) ?? "FULL",
     status: row.status,
@@ -277,6 +298,16 @@ async function createScheduledTimesheet(
   return { updated: created, userId: employee.userId, workDate };
 }
 
+async function requestsForSubmission(organizationId: string, submissionKey: string) {
+  return prisma.attendanceCorrectnessRequest.findMany({
+    where: {
+      organizationId,
+      OR: [{ submissionId: submissionKey }, { submissionId: null, id: submissionKey }]
+    },
+    orderBy: [{ workDate: "asc" }, { session: "asc" }]
+  });
+}
+
 export const attendanceCorrectnessService = {
   async createRequests(userId: string, input: { dates?: string[]; days?: DayInput[]; note?: string }) {
     const employee = await employeeContext(userId);
@@ -286,6 +317,7 @@ export const attendanceCorrectnessService = {
     const zone = employee.office!.timezone || employee.schedule!.timezone;
     const todayKey = DateTime.now().setZone(zone).toISODate()!;
 
+    const submissionId = randomUUID();
     const created = [];
     for (const day of dayInputs) {
       const workDateKey = day.date;
@@ -328,6 +360,7 @@ export const attendanceCorrectnessService = {
 
       const row = await prisma.attendanceCorrectnessRequest.create({
         data: {
+          submissionId,
           organizationId: employee.organizationId,
           employeeId: employee.id,
           workDate,
@@ -341,29 +374,27 @@ export const attendanceCorrectnessService = {
     }
 
     const admins = await orgAdminUserIds(employee.organizationId);
-    for (const row of created) {
-      const sessionLabel =
-        row.session === "MORNING" ? "half day morning" : row.session === "AFTERNOON" ? "half day afternoon" : "full day";
-      for (const adminId of admins) {
-        const n = await prisma.notification.create({
-          data: {
-            userId: adminId,
-            type: "ATTENDANCE_CORRECTNESS_SUBMITTED",
-            title: "Attendance correctness request",
-            message: `${employee.firstName} ${employee.lastName} requested attendance correction for ${formatWorkDateKey(row.workDate)} (${sessionLabel}).`,
-            relatedEntityType: "AttendanceCorrectnessRequest",
-            relatedEntityId: row.id
-          }
-        });
-        await deliverNotification(n);
-      }
-      emitToOrgAdmins(employee.organizationId, "attendance.correctness_requested", {
-        requestId: row.id,
-        employeeId: employee.id,
-        workDate: formatWorkDateKey(row.workDate),
-        session: row.session
+    const dateLabel = submissionDateLabel(created.map((row) => formatWorkDateKey(row.workDate)));
+    for (const adminId of admins) {
+      const n = await prisma.notification.create({
+        data: {
+          userId: adminId,
+          type: "ATTENDANCE_CORRECTNESS_SUBMITTED",
+          title: "Attendance correctness request",
+          message: `${employee.firstName} ${employee.lastName} requested attendance correction for ${dateLabel}.`,
+          relatedEntityType: "AttendanceCorrectnessSubmission",
+          relatedEntityId: submissionId
+        }
       });
+      await deliverNotification(n);
     }
+    emitToOrgAdmins(employee.organizationId, "attendance.correctness_requested", {
+      submissionId,
+      requestId: submissionId,
+      employeeId: employee.id,
+      dayCount: created.length,
+      workDates: created.map((row) => formatWorkDateKey(row.workDate))
+    });
 
     return created.map(serializeRequest);
   },
@@ -393,15 +424,27 @@ export const attendanceCorrectnessService = {
     input: { date?: string; status?: string; officeId?: string },
     scope: OfficeScope
   ) {
+    const employeeFilter = employeeOfficeFilter(scope, input.officeId);
     const where: Record<string, unknown> = {
       organizationId,
-      employee: employeeOfficeFilter(scope, input.officeId)
+      employee: employeeFilter
     };
     if (input.date) where.workDate = workDateFromKey(input.date);
     if (input.status) where.status = input.status;
 
-    const items = await prisma.attendanceCorrectnessRequest.findMany({
+    const matched = await prisma.attendanceCorrectnessRequest.findMany({
       where,
+      select: { id: true, submissionId: true, status: true }
+    });
+    if (!matched.length) return [];
+
+    const submissionKeys = [...new Set(matched.map((row) => submissionKey(row)))];
+    const items = await prisma.attendanceCorrectnessRequest.findMany({
+      where: {
+        organizationId,
+        employee: employeeFilter,
+        OR: submissionKeys.flatMap((key) => [{ submissionId: key }, { submissionId: null, id: key }])
+      },
       orderBy: [{ workDate: "desc" }, { createdAt: "desc" }],
       include: {
         employee: { include: { office: { select: { id: true, name: true } } } },
@@ -422,13 +465,83 @@ export const attendanceCorrectnessService = {
       }
     });
 
-    return items.map((row) => ({
+    const bySubmission = new Map<string, typeof items>();
+    for (const row of items) {
+      const key = submissionKey(row);
+      const list = bySubmission.get(key) ?? [];
+      list.push(row);
+      bySubmission.set(key, list);
+    }
+
+    const visibleKeys = submissionKeys.filter((key) => {
+      const days = bySubmission.get(key) ?? [];
+      if (!days.length) return false;
+      if (input.date && !days.some((d) => formatWorkDateKey(d.workDate) === input.date)) return false;
+      if (!input.status) return true;
+      if (input.status === "PENDING") return days.some((d) => d.status === "PENDING");
+      return days.every((d) => d.status === input.status);
+    });
+
+    const visible = visibleKeys.flatMap((key) => bySubmission.get(key) ?? []);
+    return visible.map((row) => ({
       ...serializeRequest(row),
       timesheet: row.timesheet
     }));
   },
 
-  async approve(organizationId: string, id: string, audit: AuditContext, scope: OfficeScope, adminNote?: string) {
+  async adminGetSubmission(organizationId: string, submissionKey: string, scope: OfficeScope) {
+    const rows = await prisma.attendanceCorrectnessRequest.findMany({
+      where: {
+        organizationId,
+        OR: [{ submissionId: submissionKey }, { submissionId: null, id: submissionKey }]
+      },
+      orderBy: [{ workDate: "asc" }, { session: "asc" }],
+      include: {
+        employee: { include: { office: { select: { id: true, name: true } } } },
+        timesheet: {
+          select: {
+            id: true,
+            actualCheckIn: true,
+            actualCheckOut: true,
+            scheduledCheckIn: true,
+            scheduledCheckOut: true,
+            lateMinutes: true,
+            workedMinutes: true,
+            isLate: true,
+            isMissingCheckout: true,
+            status: true
+          }
+        }
+      }
+    });
+    if (!rows.length) throw new AppError(404, "REQUEST_NOT_FOUND", "Correctness submission not found");
+    assertOfficeInScope(scope, rows[0]!.employee.officeId, "You do not manage this office");
+
+    const days = rows.map((row) => ({
+      ...serializeRequest(row),
+      timesheet: row.timesheet
+    }));
+    const statuses = days.map((d) => d.status);
+    return {
+      submissionId: submissionKey,
+      status: aggregateSubmissionStatus(statuses),
+      employeeNote: days.find((d) => d.employeeNote)?.employeeNote ?? null,
+      createdAt: days.reduce((min, d) => (d.createdAt < min ? d.createdAt : min), days[0]!.createdAt),
+      employee: days[0]!.employee,
+      dayCount: days.length,
+      days
+    };
+  },
+
+  async approve(
+    organizationId: string,
+    id: string,
+    audit: AuditContext,
+    scope: OfficeScope,
+    adminNote?: string,
+    options?: { notify?: boolean }
+  ) {
+    const notify = options?.notify !== false;
     const request = await prisma.attendanceCorrectnessRequest.findUnique({
       where: { id },
       include: {
@@ -467,26 +580,80 @@ export const attendanceCorrectnessService = {
       include: { employee: { include: { office: { select: { id: true, name: true } } } } }
     });
 
-    const sessionLabel = session === "MORNING" ? " (half day morning)" : session === "AFTERNOON" ? " (half day afternoon)" : "";
-    const n = await prisma.notification.create({
-      data: {
-        userId: request.employee.userId,
-        type: "ATTENDANCE_CORRECTNESS_APPROVED",
-        title: "Attendance corrected",
-        message: `Your attendance for ${formatWorkDateKey(request.workDate)}${sessionLabel} was approved.`,
-        relatedEntityType: "AttendanceCorrectnessRequest",
-        relatedEntityId: id
-      }
-    });
-    await deliverNotification(n);
-    emitToUser(request.employee.userId, "attendance.correctness_decided", { requestId: id, status: "APPROVED", session });
-    emitToOrgAdmins(organizationId, "attendance.correctness_decided", { requestId: id, status: "APPROVED", session });
+    if (notify) {
+      const sessionLabel = session === "MORNING" ? " (half day morning)" : session === "AFTERNOON" ? " (half day afternoon)" : "";
+      const n = await prisma.notification.create({
+        data: {
+          userId: request.employee.userId,
+          type: "ATTENDANCE_CORRECTNESS_APPROVED",
+          title: "Attendance corrected",
+          message: `Your attendance for ${formatWorkDateKey(request.workDate)}${sessionLabel} was approved.`,
+          relatedEntityType: "AttendanceCorrectnessRequest",
+          relatedEntityId: id
+        }
+      });
+      await deliverNotification(n);
+      emitToUser(request.employee.userId, "attendance.correctness_decided", { requestId: id, status: "APPROVED", session });
+      emitToOrgAdmins(organizationId, "attendance.correctness_decided", { requestId: id, status: "APPROVED", session });
+    }
     emitToOrgAdmins(organizationId, "attendance.corrected", { timesheetId: timesheetResult.updated.id, employeeId: request.employeeId });
 
     return serializeRequest(updated);
   },
 
-  async reject(organizationId: string, id: string, audit: AuditContext, scope: OfficeScope, adminNote?: string) {
+  async approveSubmission(
+    organizationId: string,
+    submissionKey: string,
+    audit: AuditContext,
+    scope: OfficeScope,
+    adminNote?: string
+  ) {
+    const rows = await requestsForSubmission(organizationId, submissionKey);
+    if (!rows.length) throw new AppError(404, "REQUEST_NOT_FOUND", "Correctness submission not found");
+    const pending = rows.filter((r) => r.status === "PENDING");
+    if (!pending.length) throw new AppError(409, "REQUEST_NOT_PENDING", "No pending days in this submission");
+
+    const results = [];
+    for (const row of pending) {
+      results.push(await this.approve(organizationId, row.id, audit, scope, adminNote, { notify: false }));
+    }
+
+    const employee = await prisma.employee.findUnique({
+      where: { id: rows[0]!.employeeId },
+      select: { userId: true, firstName: true, lastName: true }
+    });
+    if (employee) {
+      const dateLabel = submissionDateLabel(results.map((r) => r.workDate));
+      const n = await prisma.notification.create({
+        data: {
+          userId: employee.userId,
+          type: "ATTENDANCE_CORRECTNESS_APPROVED",
+          title: "Attendance corrected",
+          message: `Your attendance correction for ${dateLabel} was approved.`,
+          relatedEntityType: "AttendanceCorrectnessSubmission",
+          relatedEntityId: submissionKey
+        }
+      });
+      await deliverNotification(n);
+      emitToUser(employee.userId, "attendance.correctness_decided", {
+        submissionId: submissionKey,
+        requestId: submissionKey,
+        status: "APPROVED",
+        dayCount: results.length
+      });
+      emitToOrgAdmins(organizationId, "attendance.correctness_decided", {
+        submissionId: submissionKey,
+        requestId: submissionKey,
+        status: "APPROVED",
+        dayCount: results.length
+      });
+    }
+
+    return { submissionId: submissionKey, days: results };
+  },
+
+  async reject(organizationId: string, id: string, audit: AuditContext, scope: OfficeScope, adminNote?: string, options?: { notify?: boolean }) {
+    const notify = options?.notify !== false;
     const request = await prisma.attendanceCorrectnessRequest.findUnique({
       where: { id },
       include: { employee: { include: { office: { select: { id: true, name: true } } } } }
@@ -508,24 +675,74 @@ export const attendanceCorrectnessService = {
       include: { employee: { include: { office: { select: { id: true, name: true } } } } }
     });
 
-    const employee = await prisma.employee.findUnique({ where: { id: request.employeeId }, select: { userId: true } });
+    if (notify) {
+      const employee = await prisma.employee.findUnique({ where: { id: request.employeeId }, select: { userId: true } });
+      if (employee) {
+        const n = await prisma.notification.create({
+          data: {
+            userId: employee.userId,
+            type: "ATTENDANCE_CORRECTNESS_REJECTED",
+            title: "Attendance request declined",
+            message: `Your attendance request for ${formatWorkDateKey(request.workDate)} was declined.`,
+            relatedEntityType: "AttendanceCorrectnessRequest",
+            relatedEntityId: id
+          }
+        });
+        await deliverNotification(n);
+        emitToUser(employee.userId, "attendance.correctness_decided", { requestId: id, status: "REJECTED" });
+        emitToOrgAdmins(request.organizationId, "attendance.correctness_decided", { requestId: id, status: "REJECTED" });
+      }
+    }
+
+    return serializeRequest(updated);
+  },
+
+  async rejectSubmission(
+    organizationId: string,
+    submissionKey: string,
+    audit: AuditContext,
+    scope: OfficeScope,
+    adminNote?: string
+  ) {
+    const rows = await requestsForSubmission(organizationId, submissionKey);
+    if (!rows.length) throw new AppError(404, "REQUEST_NOT_FOUND", "Correctness submission not found");
+    const pending = rows.filter((r) => r.status === "PENDING");
+    if (!pending.length) throw new AppError(409, "REQUEST_NOT_PENDING", "No pending days in this submission");
+
+    const results = [];
+    for (const row of pending) {
+      results.push(await this.reject(organizationId, row.id, audit, scope, adminNote, { notify: false }));
+    }
+
+    const employee = await prisma.employee.findUnique({ where: { id: rows[0]!.employeeId }, select: { userId: true } });
     if (employee) {
+      const dateLabel = submissionDateLabel(results.map((r) => r.workDate));
       const n = await prisma.notification.create({
         data: {
           userId: employee.userId,
           type: "ATTENDANCE_CORRECTNESS_REJECTED",
           title: "Attendance request declined",
-          message: `Your attendance request for ${formatWorkDateKey(request.workDate)} was declined.`,
-          relatedEntityType: "AttendanceCorrectnessRequest",
-          relatedEntityId: id
+          message: `Your attendance correction for ${dateLabel} was declined.`,
+          relatedEntityType: "AttendanceCorrectnessSubmission",
+          relatedEntityId: submissionKey
         }
       });
       await deliverNotification(n);
-      emitToUser(employee.userId, "attendance.correctness_decided", { requestId: id, status: "REJECTED" });
-      emitToOrgAdmins(request.organizationId, "attendance.correctness_decided", { requestId: id, status: "REJECTED" });
+      emitToUser(employee.userId, "attendance.correctness_decided", {
+        submissionId: submissionKey,
+        requestId: submissionKey,
+        status: "REJECTED",
+        dayCount: results.length
+      });
+      emitToOrgAdmins(organizationId, "attendance.correctness_decided", {
+        submissionId: submissionKey,
+        requestId: submissionKey,
+        status: "REJECTED",
+        dayCount: results.length
+      });
     }
 
-    return serializeRequest(updated);
+    return { submissionId: submissionKey, days: results };
   },
 
   async mapForEmployees(employeeIds: string[], workDate: Date) {

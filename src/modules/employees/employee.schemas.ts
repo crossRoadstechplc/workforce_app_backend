@@ -92,7 +92,7 @@ export const emergencyContactBodySchema = z
   .object({
     name: z.string().trim().min(1).max(100),
     phone: z.string().trim().min(1).max(40),
-    relation: emergencyContactRelation,
+    relation: emergencyContactRelation.optional().nullable(),
     relationOther: optionalText
   })
   .superRefine(refineRelationOther);

@@ -20,7 +20,7 @@ export type EmergencyContactRelation =
 export type EmergencyContactInput = {
   name: string;
   phone: string;
-  relation: EmergencyContactRelation;
+  relation?: EmergencyContactRelation | null;
   relationOther?: string | null;
 };
 
@@ -28,7 +28,7 @@ function mapContact(contact: {
   id: string;
   name: string;
   phone: string;
-  relation: EmergencyContactRelation;
+  relation: EmergencyContactRelation | null;
   relationOther: string | null;
   sortOrder: number;
 }) {
@@ -69,11 +69,12 @@ async function assertUnderLimit(employeeId: string) {
 }
 
 function normalizeInput(input: EmergencyContactInput) {
+  const relation = input.relation ?? null;
   return {
     name: input.name.trim(),
     phone: input.phone.trim(),
-    relation: input.relation,
-    relationOther: input.relation === "OTHER" ? input.relationOther?.trim() || null : null
+    relation,
+    relationOther: relation === "OTHER" ? input.relationOther?.trim() || null : null
   };
 }
 
@@ -161,7 +162,7 @@ export const emergencyContactService = {
     if (!current || current.employeeId !== employeeId) {
       throw new AppError(404, "EMERGENCY_CONTACT_NOT_FOUND", "Emergency contact not found");
     }
-    const nextRelation = input.relation ?? current.relation;
+    const nextRelation = input.relation !== undefined ? input.relation : current.relation;
     const updated = await prisma.employeeEmergencyContact.update({
       where: { id: contactId },
       data: {

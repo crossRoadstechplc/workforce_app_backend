@@ -68,3 +68,52 @@ export const rejectCorrectnessRequest: RequestHandler = async (req, res, next) =
     next(e);
   }
 };
+
+export const adminGetCorrectnessSubmission: RequestHandler = async (req, res, next) => {
+  try {
+    const scope = getOfficeScope(req.auth);
+    res.json({
+      data: await attendanceCorrectnessService.adminGetSubmission(
+        requireOrganizationId(req.auth),
+        paramId(req.params.submissionId!),
+        scope
+      )
+    });
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const approveCorrectnessSubmission: RequestHandler = async (req, res, next) => {
+  try {
+    const scope = getOfficeScope(req.auth);
+    res.json({
+      data: await attendanceCorrectnessService.approveSubmission(
+        requireOrganizationId(req.auth),
+        paramId(req.params.submissionId!),
+        auditContextFromRequest(req),
+        scope,
+        req.body.adminNote
+      )
+    });
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const rejectCorrectnessSubmission: RequestHandler = async (req, res, next) => {
+  try {
+    const scope = getOfficeScope(req.auth);
+    res.json({
+      data: await attendanceCorrectnessService.rejectSubmission(
+        requireOrganizationId(req.auth),
+        paramId(req.params.submissionId!),
+        auditContextFromRequest(req),
+        scope,
+        req.body.adminNote
+      )
+    });
+  } catch (e) {
+    next(e);
+  }
+};

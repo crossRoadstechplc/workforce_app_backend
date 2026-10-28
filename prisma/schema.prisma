@@ -561,7 +561,7 @@ model EmployeeEmergencyContact {
   employeeId    String                     @map("employee_id") @db.Uuid
   name          String
   phone         String
-  relation      EmergencyContactRelation
+  relation      EmergencyContactRelation?
   relationOther String?                    @map("relation_other")
   sortOrder     Int                        @default(0) @map("sort_order")
   createdAt     DateTime                   @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -750,6 +750,7 @@ model AttendanceCorrection {
 
 model AttendanceCorrectnessRequest {
   id               String                       @id @default(uuid()) @db.Uuid
+  submissionId     String?                      @map("submission_id") @db.Uuid
   organizationId   String                       @map("organization_id") @db.Uuid
   employeeId       String                       @map("employee_id") @db.Uuid
   workDate         DateTime                     @map("work_date") @db.Date
@@ -767,8 +768,10 @@ model AttendanceCorrectnessRequest {
   timesheet        Timesheet?                   @relation(fields: [timesheetId], references: [id], onDelete: SetNull)
   reviewedBy       User?                        @relation("CorrectnessReviewer", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
   @@index([organizationId, workDate, status])
+  @@index([organizationId, submissionId])
   @@index([employeeId, workDate, session])
   @@index([employeeId, status])
+  @@index([employeeId, submissionId])
   @@map("attendance_correctness_requests")
 }
 

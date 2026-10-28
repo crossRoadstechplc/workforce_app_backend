@@ -3,10 +3,13 @@ import { authenticate, requireNormalSession, requireOrgContext, requirePermissio
 import { validate } from "../../shared/validate.js";
 import {
   adminCorrectnessRequests,
+  adminGetCorrectnessSubmission,
   approveCorrectnessRequest,
+  approveCorrectnessSubmission,
   createCorrectnessRequests,
   myCorrectnessRequests,
-  rejectCorrectnessRequest
+  rejectCorrectnessRequest,
+  rejectCorrectnessSubmission
 } from "./attendance-correctness.controller.js";
 import {
   adminCorrectnessListSchema,
@@ -37,6 +40,23 @@ adminAttendanceCorrectnessRouter.get(
   requirePermission("attendance.correctness.review"),
   validate(adminCorrectnessListSchema),
   adminCorrectnessRequests
+);
+adminAttendanceCorrectnessRouter.get(
+  "/submissions/:submissionId",
+  requirePermission("attendance.correctness.review"),
+  adminGetCorrectnessSubmission
+);
+adminAttendanceCorrectnessRouter.post(
+  "/submissions/:submissionId/approve",
+  requirePermission("attendance.correctness.review"),
+  validate(correctnessDecisionSchema),
+  approveCorrectnessSubmission
+);
+adminAttendanceCorrectnessRouter.post(
+  "/submissions/:submissionId/reject",
+  requirePermission("attendance.correctness.review"),
+  validate(correctnessDecisionSchema),
+  rejectCorrectnessSubmission
 );
 adminAttendanceCorrectnessRouter.post(
   "/:id/approve",
