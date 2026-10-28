@@ -25,7 +25,7 @@ const optionalBirthDate = z.preprocess(
   z.coerce.date().nullable()
 );
 
-function refineRelationOther<T extends { relation?: string; relationOther?: string | null }>(value: T, ctx: z.RefinementCtx) {
+function refineRelationOther<T extends { relation?: string | null; relationOther?: string | null }>(value: T, ctx: z.RefinementCtx) {
   if (value.relation === "OTHER") {
     const other = value.relationOther?.trim();
     if (!other) {

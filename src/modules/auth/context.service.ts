@@ -177,7 +177,7 @@ export type ScopedIdentity = {
       id: string;
       name: string;
       phone: string;
-      relation: string;
+      relation: string | null;
       relationOther: string | null;
       sortOrder: number;
     }>;
