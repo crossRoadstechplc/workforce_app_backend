@@ -13,6 +13,8 @@ import {
   emergencyContactService,
   type EmergencyContactInput
 } from "../employees/emergency-contact.service.js";
+import { companyAssetService } from "../company-assets/company-asset.service.js";
+import type { AssetDraft } from "../company-assets/company-asset.schemas.js";
 import { logger } from "../../config/logger.js";
 import { sendMail } from "../mail/mailer.js";
 import { employeeInviteEmail, officeAdminInviteEmail, orgAdminInviteEmail } from "../mail/templates.js";
@@ -328,6 +330,7 @@ export const inviteService = {
       jobTitle?: string | null;
       departmentId?: string | null;
       evaluationTemplateId?: string | null;
+      assets?: AssetDraft[];
     };
     const officeId = invite.officeId ?? input.officeId ?? null;
     const scheduleId = invite.scheduleId ?? input.scheduleId ?? null;
@@ -367,6 +370,16 @@ export const inviteService = {
       await emergencyContactService.createForEmployee(created.employee.id, contact, audit);
     }
 
+    if (payload.assets?.length) {
+      await companyAssetService.assignMany(
+        invite.organizationId,
+        created.employee.id,
+        payload.assets,
+        audit,
+        { allOffices: true, officeIds: [] }
+      );
+    }
+
     await prisma.invite.update({
       where: { id: invite.id },
       data: { status: "ACCEPTED", acceptedAt: new Date(), userId: created.employee.userId }
@@ -391,6 +404,7 @@ export const inviteService = {
       jobTitle?: string | null;
       departmentId?: string | null;
       evaluationTemplateId?: string | null;
+      assets?: AssetDraft[];
     },
     audit: AuditContext,
     scope: OfficeScope
@@ -411,7 +425,8 @@ export const inviteService = {
           ...(input.birthDate ? { birthDate: input.birthDate.toISOString().slice(0, 10) } : {}),
           ...(input.jobTitle ? { jobTitle: input.jobTitle } : {}),
           ...(input.departmentId ? { departmentId: input.departmentId } : {}),
-          ...(input.evaluationTemplateId ? { evaluationTemplateId: input.evaluationTemplateId } : {})
+          ...(input.evaluationTemplateId ? { evaluationTemplateId: input.evaluationTemplateId } : {}),
+          ...(input.assets?.length ? { assets: input.assets } : {})
         }
       })
     );
@@ -503,6 +518,7 @@ export const inviteService = {
       jobTitle?: string | null;
       departmentId?: string | null;
       evaluationTemplateId?: string | null;
+      assets?: AssetDraft[];
     },
     audit: AuditContext,
     scope: OfficeScope
@@ -539,6 +555,7 @@ export const inviteService = {
       jobTitle?: string | null;
       departmentId?: string | null;
       evaluationTemplateId?: string | null;
+      assets?: AssetDraft[];
     };
     const nextPayload = {
       ...currentPayload,
@@ -550,7 +567,8 @@ export const inviteService = {
         : {}),
       ...(input.jobTitle !== undefined ? { jobTitle: input.jobTitle } : {}),
       ...(input.departmentId !== undefined ? { departmentId: input.departmentId } : {}),
-      ...(input.evaluationTemplateId !== undefined ? { evaluationTemplateId: input.evaluationTemplateId } : {})
+      ...(input.evaluationTemplateId !== undefined ? { evaluationTemplateId: input.evaluationTemplateId } : {}),
+      ...(input.assets !== undefined ? { assets: input.assets } : {})
     };
 
     let token: string | null = null;

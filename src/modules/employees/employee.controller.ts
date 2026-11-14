@@ -15,13 +15,18 @@ import {
   updateEmployeeSchema
 } from "./employee.schemas.js";
 import { employeeService } from "./employee.service.js";
+import { companyAssetService } from "../company-assets/company-asset.service.js";
 import { emergencyContactService } from "./emergency-contact.service.js";
 import { AppError } from "../../shared/errors/app-error.js";
 
 export const createEmployee: RequestHandler = async (req, res) => {
   const organizationId = requireOrganizationId(req.auth);
   const scope = getOfficeScope(req.auth);
-  const result = await employeeService.create(organizationId, createEmployeeSchema.parse(req.body), auditContextFromRequest(req), scope);
+  const { assets, ...employeeInput } = createEmployeeSchema.parse(req.body);
+  const result = await employeeService.create(organizationId, employeeInput, auditContextFromRequest(req), scope);
+  if (assets?.length) {
+    await companyAssetService.assignMany(organizationId, result.employee.id, assets, auditContextFromRequest(req), scope);
+  }
   res.status(201).json(result);
 };
 export const listEmployees: RequestHandler = async (req, res) =>

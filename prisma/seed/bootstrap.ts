@@ -16,6 +16,7 @@ export const orgAdminPermissions = [
   "display.manage",
   "chat.use",
   "notification.view", "report.view", "report.export", "audit.view",
+  "company_asset.manage",
   "vault.manage",
   "task_tracker.access", "task_tracker.manage"
 ];
@@ -29,6 +30,7 @@ export const officeAdminPermissions = [
   "meeting.book", "meeting.view_own",
   "chat.use",
   "notification.view", "report.view", "report.export", "audit.view",
+  "company_asset.manage",
   "task_tracker.access", "task_tracker.manage"
 ];
 
@@ -45,6 +47,7 @@ export const employeePermissions = [
   "meeting.book", "meeting.view_own",
   "chat.use",
   "notification.view",
+  "company_asset.view_own", "company_asset.respond",
   "task_tracker.access"
 ];
 

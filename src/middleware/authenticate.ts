@@ -48,6 +48,12 @@ export const requireNormalSession: RequestHandler = (req, _res, next) =>
 export const requirePermission = (permission: string): RequestHandler => (req, _res, next) =>
   req.auth?.permissions.includes(permission) ? next() : next(new AppError(403, "FORBIDDEN", "You do not have permission"));
 
+/** Passes when the session has any one of the listed permissions. */
+export const requireAnyPermission = (...permissions: string[]): RequestHandler => (req, _res, next) =>
+  permissions.some((permission) => req.auth?.permissions.includes(permission))
+    ? next()
+    : next(new AppError(403, "FORBIDDEN", "You do not have permission"));
+
 /** Tenant admin routes require organizationId on the token (org admin or office admin). */
 export const requireOrgContext: RequestHandler = (req, _res, next) => {
   if (isSuperAdmin(req.auth)) return next(new AppError(403, "PLATFORM_ONLY", "Platform operators must use platform APIs"));

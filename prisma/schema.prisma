@@ -143,6 +143,25 @@ enum NotificationType {
   CHAT_MESSAGE
   HOLIDAY_ANNOUNCED
   BIRTHDAY_WISH
+  COMPANY_ASSET_ASSIGNED
+  COMPANY_ASSET_UPDATED
+  COMPANY_ASSET_ACCEPTED
+  COMPANY_ASSET_DECLINED
+  COMPANY_ASSET_RETURNED
+}
+
+enum CompanyAssetType {
+  LAPTOP
+  DESKTOP
+  CAR
+  OTHER
+}
+
+enum CompanyAssetStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  RETURNED
 }
 
 enum HolidaySource {
@@ -304,6 +323,7 @@ model Organization {
   organizationHolidays  OrganizationHoliday[]
   holidayApplications   HolidayApplication[]
   holidayAssignments    HolidayAssignment[]
+  companyAssets         CompanyAsset[]
   @@map("organizations")
 }
 
@@ -377,6 +397,8 @@ model User {
   holidayAutoEnabled      OrganizationHoliday[] @relation("HolidayAutoEnabledBy")
   ttStaffMembers          TtStaffMember[]
   ttSessionExchanges      TtSessionExchange[]
+  assignedCompanyAssets   CompanyAsset[] @relation("CompanyAssetAssigner")
+  returnedCompanyAssets   CompanyAsset[] @relation("CompanyAssetReturner")
   @@map("users")
 }
 
@@ -545,6 +567,7 @@ model Employee {
   holidayAssignments  HolidayAssignment[]
   ttStaffMember       TtStaffMember?
   officeSubscriptions OfficeSubscription[]
+  companyAssets       CompanyAsset[]
   @@unique([organizationId, employeeCode])
   @@index([organizationId, status])
   @@index([officeId])
@@ -570,6 +593,34 @@ model EmployeeEmergencyContact {
 
   @@index([employeeId, sortOrder])
   @@map("employee_emergency_contacts")
+}
+
+model CompanyAsset {
+  id               String             @id @default(uuid()) @db.Uuid
+  organizationId   String             @map("organization_id") @db.Uuid
+  employeeId       String             @map("employee_id") @db.Uuid
+  type             CompanyAssetType
+  name             String
+  identifier       String
+  notes            String?
+  status           CompanyAssetStatus @default(PENDING)
+  assignedByUserId String             @map("assigned_by_user_id") @db.Uuid
+  respondedAt      DateTime?          @map("responded_at") @db.Timestamptz(6)
+  responseNote     String?            @map("response_note")
+  returnedAt       DateTime?          @map("returned_at") @db.Timestamptz(6)
+  returnedByUserId String?            @map("returned_by_user_id") @db.Uuid
+  returnNote       String?            @map("return_note")
+  createdAt        DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization     Organization       @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  employee         Employee           @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  assignedBy       User               @relation("CompanyAssetAssigner", fields: [assignedByUserId], references: [id], onDelete: Restrict)
+  returnedBy       User?              @relation("CompanyAssetReturner", fields: [returnedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, status])
+  @@index([employeeId, status])
+  @@index([assignedByUserId])
+  @@map("company_assets")
 }
 
 model Invite {

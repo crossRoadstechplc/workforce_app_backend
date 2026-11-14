@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { easyPasswordSchema } from "../../shared/password.js";
 import { emergencyContactBodySchema } from "../employees/employee.schemas.js";
+import { assetDraftListSchema } from "../company-assets/company-asset.schemas.js";
 import { MAX_EMERGENCY_CONTACTS } from "../employees/emergency-contact.service.js";
 
 export const invitePasswordSchema = easyPasswordSchema;
@@ -50,7 +51,8 @@ export const createEmployeeInviteSchema = z.object({
   birthDate: optionalBirthDate.optional(),
   jobTitle: z.string().trim().max(200).optional().nullable(),
   departmentId: z.string().uuid().optional().nullable(),
-  evaluationTemplateId: z.string().uuid().optional().nullable()
+  evaluationTemplateId: z.string().uuid().optional().nullable(),
+  assets: assetDraftListSchema.optional()
 });
 
 export const updateEmployeeInviteSchema = createEmployeeInviteSchema.partial().refine((value) => Object.keys(value).length > 0, {
