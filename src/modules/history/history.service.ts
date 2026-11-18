@@ -324,19 +324,8 @@ export const historyService = {
           userAgent: audit.userAgent
         }
       });
-      const n = await tx.notification.create({
-        data: {
-          userId: current.employee.userId,
-          type: "WORKSHEET_REVIEWED",
-          title: "Worksheet reviewed",
-          message: "Your daily worksheet was reviewed.",
-          relatedEntityType: "Worksheet",
-          relatedEntityId: id
-        }
-      });
-      return { updated, n };
+      return { updated };
     });
-    await deliverNotification(result.n);
     emitToUser(current.employee.userId, "worksheet.reviewed", { worksheetId: id });
     return result.updated;
   }

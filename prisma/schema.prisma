@@ -60,6 +60,7 @@ enum AttendanceLocationSource {
   GPS
   DESKTOP
   SYSTEM
+  IOS
 }
 
 enum CheckOutSource {
@@ -296,6 +297,7 @@ model Organization {
   isActive                Boolean                    @default(true) @map("is_active")
   attendancePhotoRequired         Boolean                    @default(true) @map("attendance_photo_required")
   attendanceDesktopSkipLocation   Boolean                    @default(true) @map("attendance_desktop_skip_location")
+  attendanceIosSkipLocation       Boolean                    @default(false) @map("attendance_ios_skip_location")
   attendanceAutoCheckoutEnabled   Boolean                    @default(true) @map("attendance_auto_checkout_enabled")
   attendanceAutoCheckoutTime      String                     @default("22:00") @map("attendance_auto_checkout_time")
   createdAt               DateTime                   @default(now()) @map("created_at") @db.Timestamptz(6)

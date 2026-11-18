@@ -1,11 +1,9 @@
 import type { AttendanceStatus, CheckOutSource } from "../../generated/prisma/client.js";
 import { prisma } from "../../database/prisma.js";
 import { AppError } from "../../shared/errors/app-error.js";
-import { deliverNotification } from "../notifications/notification.service.js";
 import { emitToOfficeDisplay, emitToOrgAdmins, emitToUser } from "../../realtime/socket.server.js";
 import { formatWorkDateKey, todayWorkDateKey } from "../../shared/work-date.js";
 import { assertWorksheetNotCopied } from "../history/worksheet-duplicate.js";
-import { formatDurationMinutes } from "../../shared/format-duration.js";
 import { computeCheckoutMetrics } from "./auto-checkout.logic.js";
 
 type OpenTimesheet = {
@@ -23,7 +21,7 @@ type OpenTimesheet = {
 
 type CheckoutLocationCreate = {
   type: "CHECK_OUT";
-  source: "GPS" | "DESKTOP";
+  source: "GPS" | "DESKTOP" | "IOS";
   latitude: number | null;
   longitude: number | null;
   accuracyMeters: number | null;
@@ -124,37 +122,9 @@ export async function closeOpenTimesheet(input: {
       include: { worksheet: true, lateReason: true, locations: true }
     });
 
-    const notification =
-      source === "SYSTEM"
-        ? await tx.notification.create({
-            data: {
-              userId,
-              type: "CHECK_OUT_AUTO",
-              title: "Automatic checkout",
-              message: closedCarriedOverShift
-                ? `Your open shift was closed automatically at the configured checkout time. Worked time: ${formatDurationMinutes(metrics.workedMinutes)}.`
-                : `You were checked out automatically at the configured time. Worked time: ${formatDurationMinutes(metrics.workedMinutes)}.`,
-              relatedEntityType: "Timesheet",
-              relatedEntityId: timesheet.id
-            }
-          })
-        : await tx.notification.create({
-            data: {
-              userId,
-              type: "CHECK_OUT_SUCCESS",
-              title: closedCarriedOverShift ? "Previous shift closed" : "Checkout successful",
-              message: closedCarriedOverShift
-                ? `Your open shift from ${formatWorkDateKey(open.workDate)} is closed. Worked time: ${formatDurationMinutes(metrics.workedMinutes)}. You can check in for today.`
-                : `You checked out successfully. Worked time: ${formatDurationMinutes(metrics.workedMinutes)}.`,
-              relatedEntityType: "Timesheet",
-              relatedEntityId: timesheet.id
-            }
-          });
-
-    return { timesheet, notification, metrics, closedCarriedOverShift };
+    return { timesheet, metrics, closedCarriedOverShift };
   });
 
-  await deliverNotification(result.notification);
   emitToUser(userId, "attendance.checked_out", {
     timesheetId: result.timesheet.id,
     workedMinutes: result.metrics.workedMinutes,

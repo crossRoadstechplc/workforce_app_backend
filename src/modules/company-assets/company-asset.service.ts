@@ -5,7 +5,6 @@ import { auditJson, type AuditContext } from "../../shared/audit.js";
 import { pageMeta, pagination } from "../../shared/pagination.js";
 import { assertOfficeInScope, employeeOfficeFilter, type OfficeScope } from "../../shared/office-scope.js";
 import { assertSameOrganization } from "../../shared/tenancy.js";
-import { deliverNotification } from "../notifications/notification.service.js";
 import type { AssetDraft } from "./company-asset.schemas.js";
 
 const assetInclude = {
@@ -77,44 +76,6 @@ async function loadAsset(organizationId: string, id: string, scope: OfficeScope)
   return asset;
 }
 
-async function notifyUser(input: {
-  userId: string;
-  type: "COMPANY_ASSET_ASSIGNED" | "COMPANY_ASSET_UPDATED" | "COMPANY_ASSET_ACCEPTED" | "COMPANY_ASSET_DECLINED" | "COMPANY_ASSET_RETURNED";
-  title: string;
-  message: string;
-  assetId: string;
-}) {
-  const notification = await prisma.notification.create({
-    data: {
-      userId: input.userId,
-      type: input.type,
-      title: input.title,
-      message: input.message,
-      relatedEntityType: "CompanyAsset",
-      relatedEntityId: input.assetId
-    }
-  });
-  await deliverNotification(notification);
-}
-
-async function adminRecipientIds(organizationId: string, officeId: string | null, assignerId: string, employeeUserId: string) {
-  const [orgAdmins, officeAdmins] = await Promise.all([
-    prisma.user.findMany({
-      where: { status: "ACTIVE", adminOrganizations: { some: { organizationId } } },
-      select: { id: true }
-    }),
-    officeId
-      ? prisma.user.findMany({
-          where: { status: "ACTIVE", adminOffices: { some: { officeId } } },
-          select: { id: true }
-        })
-      : Promise.resolve([])
-  ]);
-  return [...new Set([assignerId, ...orgAdmins.map((user) => user.id), ...officeAdmins.map((user) => user.id)])].filter(
-    (id) => id !== employeeUserId
-  );
-}
-
 function materialChange(current: { type: CompanyAssetType; name: string; identifier: string }, next: { type?: CompanyAssetType; name?: string; identifier?: string }) {
   return (
     (next.type !== undefined && next.type !== current.type) ||
@@ -126,7 +87,7 @@ function materialChange(current: { type: CompanyAssetType; name: string; identif
 export const companyAssetService = {
   async assignMany(organizationId: string, employeeId: string, drafts: AssetDraft[], audit: AuditContext, scope: OfficeScope) {
     if (!drafts.length) return [];
-    const employee = await loadEmployee(organizationId, employeeId, scope);
+    await loadEmployee(organizationId, employeeId, scope);
     const created = await prisma.$transaction(async (tx) => {
       const rows = [];
       for (const draft of drafts) {
@@ -158,18 +119,6 @@ export const companyAssetService = {
       return rows;
     });
 
-    const title = created.length === 1 ? "Confirm a company asset" : "Confirm company assets";
-    const message =
-      created.length === 1
-        ? `${created[0]!.name} was assigned to you. Open Company assets to accept or decline it.`
-        : `${created.length} company items were assigned to you. Open Company assets to accept or decline each one.`;
-    await notifyUser({
-      userId: employee.userId,
-      type: "COMPANY_ASSET_ASSIGNED",
-      title,
-      message,
-      assetId: created[0]!.id
-    });
     return created.map(serialize);
   },
 
@@ -201,15 +150,6 @@ export const companyAssetService = {
         ipAddress: audit.ipAddress,
         userAgent: audit.userAgent
       }
-    });
-    await notifyUser({
-      userId: current.employee.userId,
-      type: "COMPANY_ASSET_UPDATED",
-      title: reopened ? "Confirm an updated company asset" : "A company asset was updated",
-      message: reopened
-        ? `${updated.name} changed after you responded. Open Company assets and confirm the new details.`
-        : `${updated.name} was updated. Open Company assets to review it.`,
-      assetId: id
     });
     return serialize(updated);
   },
@@ -259,13 +199,6 @@ export const companyAssetService = {
         ipAddress: audit.ipAddress,
         userAgent: audit.userAgent
       }
-    });
-    await notifyUser({
-      userId: current.employee.userId,
-      type: "COMPANY_ASSET_RETURNED",
-      title: "Company asset returned",
-      message: `${updated.name} was recorded as returned.`,
-      assetId: id
     });
     return serialize(updated);
   },
@@ -332,7 +265,7 @@ export const companyAssetService = {
   async respond(userId: string, id: string, decision: "ACCEPTED" | "DECLINED", note?: string) {
     const employee = await prisma.employee.findUnique({
       where: { userId },
-      select: { id: true, organizationId: true, officeId: true, userId: true, firstName: true, lastName: true, status: true }
+      select: { id: true, status: true }
     });
     if (!employee || employee.status !== "ACTIVE") throw new AppError(403, "EMPLOYEE_INACTIVE", "Active employee account required");
     const asset = await prisma.companyAsset.findFirst({ where: { id, employeeId: employee.id }, include: assetInclude });
@@ -343,22 +276,6 @@ export const companyAssetService = {
       data: { status: decision, respondedAt: new Date(), responseNote: cleanNote(note) },
       include: assetInclude
     });
-    const recipients = await adminRecipientIds(employee.organizationId, employee.officeId, asset.assignedByUserId, employee.userId);
-    const employeeName = `${employee.firstName} ${employee.lastName}`.trim();
-    await Promise.all(
-      recipients.map((recipientId) =>
-        notifyUser({
-          userId: recipientId,
-          type: decision === "ACCEPTED" ? "COMPANY_ASSET_ACCEPTED" : "COMPANY_ASSET_DECLINED",
-          title: decision === "ACCEPTED" ? "Company asset accepted" : "Company asset declined",
-          message:
-            decision === "ACCEPTED"
-              ? `${employeeName} accepted ${updated.name}.`
-              : `${employeeName} declined ${updated.name}${updated.responseNote ? `: ${updated.responseNote}` : "."}`,
-          assetId: id
-        })
-      )
-    );
     return serialize(updated);
   }
 };

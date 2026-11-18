@@ -2,19 +2,27 @@ import { DateTime } from "luxon";
 import { prisma } from "../../database/prisma.js";
 import { attendancePhotoService } from "./attendance-photo.service.js";
 import { AppError } from "../../shared/errors/app-error.js";
-import { deliverNotification } from "../notifications/notification.service.js";
 import { emitToOfficeDisplay, emitToOrgAdmins, emitToOrgRole, emitToUser } from "../../realtime/socket.server.js";
 import { ROLE } from "../../shared/tenancy.js";
 import { formatWorkDateKey, todayWorkDate, todayWorkDateKey, workDateFromKey } from "../../shared/work-date.js";
-import { formatDurationMinutes } from "../../shared/format-duration.js";
 import { holidayLookup } from "../holidays/holiday.service.js";
 import { closeOpenTimesheet } from "./timesheet-close.js";
 import { canReCheckIn } from "./flexible-day.logic.js";
+import {
+  locationSkipSource,
+  type ClientChannel,
+  type DevicePlatform,
+  type LocationSkipSettings,
+  type SkippedLocationSource
+} from "./location-skip.logic.js";
 
-type ClientChannel = "MOBILE" | "DESKTOP";
 type GpsFix = { latitude: number; longitude: number; accuracyMeters: number; capturedAt: Date };
 type AttendanceActionInput = {
   clientChannel: ClientChannel;
+  /** Client-reported OS hint (preferred). */
+  devicePlatform?: DevicePlatform;
+  /** Request User-Agent, used as a fallback when devicePlatform is not sent. */
+  userAgent?: string;
   latitude?: number;
   longitude?: number;
   accuracyMeters?: number;
@@ -24,7 +32,7 @@ type CheckInInput = AttendanceActionInput & { idempotencyKey: string; photoUrl?:
 type CheckOutInput = AttendanceActionInput & { idempotencyKey: string; workDescription?: string; photoUrl?: string };
 type Presence =
   | { source: "GPS"; fix: GpsFix; geo: { distanceMeters: number; insideRadius: boolean } }
-  | { source: "DESKTOP"; fix: null; geo: { distanceMeters: null; insideRadius: true } };
+  | { source: SkippedLocationSource; fix: null; geo: { distanceMeters: null; insideRadius: true } };
 
 type GeoResult = { distance_meters: number; inside_radius: boolean };
 
@@ -106,16 +114,15 @@ function gpsFixFrom(input: AttendanceActionInput): GpsFix | null {
   };
 }
 
-async function desktopSkipEnabled(organizationId: string) {
+async function locationSkipSettings(organizationId: string): Promise<LocationSkipSettings> {
   const org = await prisma.organization.findUnique({
     where: { id: organizationId },
-    select: { attendanceDesktopSkipLocation: true }
+    select: { attendanceDesktopSkipLocation: true, attendanceIosSkipLocation: true }
   });
-  return org?.attendanceDesktopSkipLocation ?? true;
-}
-
-function locationIsRequired(channel: ClientChannel, skipEnabled: boolean) {
-  return channel === "MOBILE" || !skipEnabled;
+  return {
+    desktopSkipLocationEnabled: org?.attendanceDesktopSkipLocation ?? true,
+    iosSkipLocationEnabled: org?.attendanceIosSkipLocation ?? false
+  };
 }
 
 async function resolvePresence(
@@ -124,16 +131,16 @@ async function resolvePresence(
   organizationId: string,
   now: Date
 ): Promise<Presence> {
-  const skipEnabled = await desktopSkipEnabled(organizationId);
-  const required = locationIsRequired(input.clientChannel, skipEnabled);
-  const fix = gpsFixFrom(input);
-  if (required) {
-    if (!fix) throw new AppError(422, "LOCATION_REQUIRED", "Location is required to check in or out from this device");
-    validateCapturedAt(fix.capturedAt, now);
-    const geo = await geofence(fix, office);
-    return { source: "GPS", fix, geo };
+  const settings = await locationSkipSettings(organizationId);
+  const skipSource = locationSkipSource(input, settings);
+  if (skipSource) {
+    return { source: skipSource, fix: null, geo: { distanceMeters: null, insideRadius: true } };
   }
-  return { source: "DESKTOP", fix: null, geo: { distanceMeters: null, insideRadius: true } };
+  const fix = gpsFixFrom(input);
+  if (!fix) throw new AppError(422, "LOCATION_REQUIRED", "Location is required to check in or out from this device");
+  validateCapturedAt(fix.capturedAt, now);
+  const geo = await geofence(fix, office);
+  return { source: "GPS", fix, geo };
 }
 
 function locationCreate(
@@ -143,10 +150,10 @@ function locationCreate(
   now: Date,
   photoUrl?: string | null
 ) {
-  if (presence.source === "DESKTOP") {
+  if (presence.source !== "GPS") {
     return {
       type,
-      source: "DESKTOP" as const,
+      source: presence.source,
       latitude: null,
       longitude: null,
       accuracyMeters: null,
@@ -260,14 +267,15 @@ export const attendanceService = {
   async officeContext(userId: string) {
     const employee = await activeEmployee(userId);
     const photoRequired = await attendancePhotoService.isRequiredForOrganization(employee.organizationId);
-    const desktopSkipLocationEnabled = await desktopSkipEnabled(employee.organizationId);
+    const { desktopSkipLocationEnabled, iosSkipLocationEnabled } = await locationSkipSettings(employee.organizationId);
     if (!employee.office || !employee.office.isActive) {
       return {
         assigned: false as const,
         reason: "OFFICE_NOT_ASSIGNED" as const,
         message: "No office has been assigned to your profile yet. Contact your administrator.",
         photoRequired,
-        desktopSkipLocationEnabled
+        desktopSkipLocationEnabled,
+        iosSkipLocationEnabled
       };
     }
     if (!employee.schedule || !employee.schedule.isActive) {
@@ -276,7 +284,8 @@ export const attendanceService = {
         reason: "SCHEDULE_NOT_ASSIGNED" as const,
         message: "No work schedule has been assigned to your profile yet. Contact your administrator.",
         photoRequired,
-        desktopSkipLocationEnabled
+        desktopSkipLocationEnabled,
+        iosSkipLocationEnabled
       };
     }
     const office = employee.office;
@@ -299,6 +308,7 @@ export const attendanceService = {
       timezone: office.timezone || employee.schedule!.timezone,
       photoRequired,
       desktopSkipLocationEnabled,
+      iosSkipLocationEnabled,
       scheduledWorkMinutes
     };
   },
@@ -418,17 +428,7 @@ export const attendanceService = {
           where: { id: todayExisting.id },
           include: { lateReason: true, locations: true }
         });
-        const notification = await tx.notification.create({
-          data: {
-            userId,
-            type: "CHECK_IN_SUCCESS",
-            title: "Checked in again",
-            message: "You checked in again. Your first check-in time for today is unchanged.",
-            relatedEntityType: "Timesheet",
-            relatedEntityId: timesheet.id
-          }
-        });
-        return { timesheet, notification, isReentry: true as const, lateMinutes: todayExisting.lateMinutes };
+        return { timesheet, isReentry: true as const, lateMinutes: todayExisting.lateMinutes };
       }
 
       const timesheet = await tx.timesheet.create({
@@ -447,10 +447,8 @@ export const attendanceService = {
           ...(clock.isLate ? { lateReason: { create: { employeeId: employee.id, reasonType: input.lateReasonType!, reasonDescription: input.lateReasonDescription, submittedAt: now } } } : {})
         }, include: { lateReason: true, locations: true }
       });
-      const notification = await tx.notification.create({ data: { userId, type: clock.isLate ? "CHECK_IN_LATE" : "CHECK_IN_SUCCESS", title: clock.isLate ? "Late check-in recorded" : "Check-in successful", message: clock.isLate ? `You checked in ${formatDurationMinutes(clock.lateMinutes)} late.` : "Your check-in was recorded successfully.", relatedEntityType: "Timesheet", relatedEntityId: timesheet.id } });
-      return { timesheet, notification, isReentry: false as const, lateMinutes: clock.lateMinutes };
+      return { timesheet, isReentry: false as const, lateMinutes: clock.lateMinutes };
     });
-    await deliverNotification(result.notification);
     emitToUser(userId, "attendance.checked_in", { timesheetId: result.timesheet.id, status: result.timesheet.status, reentry: result.isReentry });
     emitToOrgAdmins(
       employee.organizationId,
@@ -497,6 +495,7 @@ export const attendanceService = {
       select: {
         attendancePhotoRequired: true,
         attendanceDesktopSkipLocation: true,
+        attendanceIosSkipLocation: true,
         attendanceAutoCheckoutEnabled: true,
         attendanceAutoCheckoutTime: true
       }
@@ -508,6 +507,7 @@ export const attendanceService = {
       photoRequired,
       photosAvailable: attendancePhotoService.isGloballyEnabled(),
       desktopSkipLocationEnabled: org.attendanceDesktopSkipLocation,
+      iosSkipLocationEnabled: org.attendanceIosSkipLocation,
       autoCheckoutEnabled: org.attendanceAutoCheckoutEnabled,
       autoCheckoutTime: org.attendanceAutoCheckoutTime
     };
@@ -518,6 +518,7 @@ export const attendanceService = {
     input: {
       photoRequiredEnabled?: boolean;
       desktopSkipLocationEnabled?: boolean;
+      iosSkipLocationEnabled?: boolean;
       autoCheckoutEnabled?: boolean;
       autoCheckoutTime?: string;
     }
@@ -527,12 +528,14 @@ export const attendanceService = {
       data: {
         ...(input.photoRequiredEnabled !== undefined ? { attendancePhotoRequired: input.photoRequiredEnabled } : {}),
         ...(input.desktopSkipLocationEnabled !== undefined ? { attendanceDesktopSkipLocation: input.desktopSkipLocationEnabled } : {}),
+        ...(input.iosSkipLocationEnabled !== undefined ? { attendanceIosSkipLocation: input.iosSkipLocationEnabled } : {}),
         ...(input.autoCheckoutEnabled !== undefined ? { attendanceAutoCheckoutEnabled: input.autoCheckoutEnabled } : {}),
         ...(input.autoCheckoutTime !== undefined ? { attendanceAutoCheckoutTime: input.autoCheckoutTime } : {})
       },
       select: {
         attendancePhotoRequired: true,
         attendanceDesktopSkipLocation: true,
+        attendanceIosSkipLocation: true,
         attendanceAutoCheckoutEnabled: true,
         attendanceAutoCheckoutTime: true
       }
@@ -542,6 +545,7 @@ export const attendanceService = {
       photoRequired,
       photoRequiredEnabled: org.attendancePhotoRequired,
       desktopSkipLocationEnabled: org.attendanceDesktopSkipLocation,
+      iosSkipLocationEnabled: org.attendanceIosSkipLocation,
       autoCheckoutEnabled: org.attendanceAutoCheckoutEnabled,
       autoCheckoutTime: org.attendanceAutoCheckoutTime
     });
@@ -550,6 +554,7 @@ export const attendanceService = {
       photoRequired,
       photosAvailable: attendancePhotoService.isGloballyEnabled(),
       desktopSkipLocationEnabled: org.attendanceDesktopSkipLocation,
+      iosSkipLocationEnabled: org.attendanceIosSkipLocation,
       autoCheckoutEnabled: org.attendanceAutoCheckoutEnabled,
       autoCheckoutTime: org.attendanceAutoCheckoutTime
     };

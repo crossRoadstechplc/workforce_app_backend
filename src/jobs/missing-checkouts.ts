@@ -2,7 +2,6 @@ import "dotenv/config";
 import { prisma } from "../database/prisma.js";
 import { env } from "../config/env.js";
 import { logger } from "../config/logger.js";
-import { deliverNotification } from "../modules/notifications/notification.service.js";
 import { emitToOrgAdmins } from "../realtime/socket.server.js";
 
 async function run() {
@@ -19,22 +18,10 @@ async function run() {
         data: { isMissingCheckout: true, status: "MISSING_CHECKOUT" }
       });
       if (!changed.count) return null;
-      const notification = await tx.notification.create({
-        data: {
-          userId: item.employee.userId,
-          type: "MISSING_CHECKOUT",
-          title: "Missing checkout",
-          message:
-            "Your workday is still open. Please check out or contact an administrator if a correction is required.",
-          relatedEntityType: "Timesheet",
-          relatedEntityId: item.id
-        }
-      });
-      return notification;
+      return true;
     });
     if (!result) continue;
     marked++;
-    await deliverNotification(result);
     emitToOrgAdmins(item.employee.organizationId, "attendance.missing_checkout", {
       timesheetId: item.id,
       employeeId: item.employeeId

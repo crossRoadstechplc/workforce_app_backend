@@ -18,7 +18,19 @@ export function normalizeAttendanceClientChannel(value: unknown): unknown {
 }
 
 const clientChannel = z.preprocess(normalizeAttendanceClientChannel, z.enum(["MOBILE", "DESKTOP"]));
+
+/** Optional hint from the client about the actual OS. Unknown values are ignored (treated as not sent). */
+export function normalizeDevicePlatform(value: unknown): unknown {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim().toUpperCase();
+  if (normalized === "IOS" || normalized === "IPADOS") return "IOS";
+  if (normalized === "ANDROID") return "ANDROID";
+  return "OTHER";
+}
+const devicePlatform = z.preprocess(normalizeDevicePlatform, z.enum(["IOS", "ANDROID", "OTHER"]).optional());
+
 const locationFields = {
+  devicePlatform,
   latitude: z.number().min(-90).max(90).optional(),
   longitude: z.number().min(-180).max(180).optional(),
   accuracyMeters: z.number().positive().max(10_000).optional(),
@@ -63,12 +75,14 @@ export const attendanceConfigUpdateSchema = z.object({
   body: z.object({
     photoRequiredEnabled: z.boolean().optional(),
     desktopSkipLocationEnabled: z.boolean().optional(),
+    iosSkipLocationEnabled: z.boolean().optional(),
     autoCheckoutEnabled: z.boolean().optional(),
     autoCheckoutTime: autoCheckoutTime.optional()
   }).refine(
     (value) =>
       value.photoRequiredEnabled !== undefined ||
       value.desktopSkipLocationEnabled !== undefined ||
+      value.iosSkipLocationEnabled !== undefined ||
       value.autoCheckoutEnabled !== undefined ||
       value.autoCheckoutTime !== undefined,
     { message: "At least one attendance setting is required" }
