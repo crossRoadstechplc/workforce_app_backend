@@ -316,6 +316,7 @@ model Organization {
   meetingRooms          MeetingRoom[]
   meetingBookings       MeetingBooking[]
   displayDevices        DisplayDevice[]
+  apiIntegrations       ApiIntegration[]
   chatConversations     ChatConversation[]
   vaultCredentials      VaultCredential[]
   officeSubscriptions   OfficeSubscription[]
@@ -390,6 +391,7 @@ model User {
   meetingBookings         MeetingBooking[]           @relation("MeetingBooker")
   cancelledMeetings       MeetingBooking[]           @relation("MeetingCanceller")
   displayDevices          DisplayDevice[]            @relation("DisplayCreator")
+  createdApiIntegrations  ApiIntegration[]           @relation("ApiIntegrationCreator")
   createdChats            ChatConversation[]         @relation("ChatCreator")
   chatParticipations      ChatParticipant[]
   chatMessages            ChatMessage[]              @relation("ChatSender")
@@ -1262,6 +1264,10 @@ model MeetingBooking {
   cancelledAt         DateTime?            @map("cancelled_at") @db.Timestamptz(6)
   cancelledByUserId   String?              @map("cancelled_by_user_id") @db.Uuid
   rescheduledAt       DateTime?            @map("rescheduled_at") @db.Timestamptz(6)
+  source              MeetingBookingSource @default(APP)
+  integrationId       String?              @map("integration_id") @db.Uuid
+  externalId          String?              @map("external_id")
+  cancelReason        String?              @map("cancel_reason")
   createdAt           DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt           DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
   organization        Organization         @relation(fields: [organizationId], references: [id], onDelete: Restrict)
@@ -1270,6 +1276,8 @@ model MeetingBooking {
   bookedBy            User                 @relation("MeetingBooker", fields: [bookedByUserId], references: [id], onDelete: Restrict)
   cancelledBy         User?                @relation("MeetingCanceller", fields: [cancelledByUserId], references: [id], onDelete: SetNull)
   organizer           Employee?            @relation(fields: [organizerEmployeeId], references: [id], onDelete: SetNull)
+  integration         ApiIntegration?      @relation(fields: [integrationId], references: [id], onDelete: SetNull)
+  @@unique([integrationId, externalId])
   @@index([roomId, startsAt, status])
   @@index([organizationId, officeId, startsAt])
   @@index([bookedByUserId, startsAt])
@@ -1298,6 +1306,60 @@ model DisplayDevice {
   @@index([organizationId, isActive])
   @@index([pairingCodeHash])
   @@map("display_devices")
+}
+
+enum MeetingBookingSource {
+  APP
+  API
+}
+
+enum WebhookDeliveryStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+}
+
+/// External system (e.g. another company app) allowed to book meeting rooms with an API key.
+model ApiIntegration {
+  id               String            @id @default(uuid()) @db.Uuid
+  organizationId   String            @map("organization_id") @db.Uuid
+  name             String
+  keyPrefix        String            @map("key_prefix")
+  keyHash          String            @unique @map("key_hash")
+  /// Empty = all offices of the organization.
+  officeIds        String[]          @default([]) @map("office_ids") @db.Uuid
+  isActive         Boolean           @default(true) @map("is_active")
+  lastUsedAt       DateTime?         @map("last_used_at") @db.Timestamptz(6)
+  revokedAt        DateTime?         @map("revoked_at") @db.Timestamptz(6)
+  webhookUrl       String?           @map("webhook_url")
+  webhookSecretEnc String?           @map("webhook_secret_enc")
+  createdByUserId  String            @map("created_by_user_id") @db.Uuid
+  createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization     Organization      @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  createdBy        User              @relation("ApiIntegrationCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  bookings         MeetingBooking[]
+  webhookDeliveries WebhookDelivery[]
+  @@index([organizationId, isActive])
+  @@map("api_integrations")
+}
+
+model WebhookDelivery {
+  id             String                @id @default(uuid()) @db.Uuid
+  integrationId  String                @map("integration_id") @db.Uuid
+  event          String
+  payload        Json
+  status         WebhookDeliveryStatus @default(PENDING)
+  attempts       Int                   @default(0)
+  nextAttemptAt  DateTime              @default(now()) @map("next_attempt_at") @db.Timestamptz(6)
+  lastStatusCode Int?                  @map("last_status_code")
+  lastError      String?               @map("last_error")
+  deliveredAt    DateTime?             @map("delivered_at") @db.Timestamptz(6)
+  createdAt      DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  integration    ApiIntegration        @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+  @@index([status, nextAttemptAt])
+  @@index([integrationId, createdAt])
+  @@map("webhook_deliveries")
 }
 
 model ChatConversation {

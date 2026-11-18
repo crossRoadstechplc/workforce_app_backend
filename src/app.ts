@@ -41,6 +41,8 @@ import { vaultRouter } from "./modules/vault/vault.routes.js";
 import { taskTrackerRouter } from "./modules/task-tracker/routes.js";
 import { adminTaskTrackerRouter } from "./modules/task-tracker/admin.routes.js";
 import { appVersionRouter } from "./modules/app-version/app-version.routes.js";
+import { integrationMeetingRouter } from "./modules/integrations/meetings-api.routes.js";
+import { adminIntegrationRouter } from "./modules/integrations/integration.admin.routes.js";
 
 export const app = express();
 app.disable("x-powered-by");
@@ -99,5 +101,8 @@ app.use("/api/v1/admin/displays", adminDisplayRouter);
 app.use("/api/v1/admin/dashboard", adminDashboardRouter);
 app.use("/api/v1/admin/reports", adminReportRouter);
 app.use("/api/v1/admin/vault", vaultRouter);
+app.use("/api/v1/admin/integrations", adminIntegrationRouter);
+// External server-to-server API (X-API-Key), e.g. another company app booking rooms for employees.
+app.use("/api/v1/integrations/meetings", integrationMeetingRouter);
 app.use((_req, res) => res.status(404).json({ error: { code: "NOT_FOUND", message: "Route not found" } }));
 app.use(errorHandler);

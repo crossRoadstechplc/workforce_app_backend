@@ -103,6 +103,21 @@ module.exports = {
       merge_logs: true,
       out_file: "logs/birthday-wishes-out.log",
       error_file: "logs/birthday-wishes-error.log"
+    },
+    {
+      name: "workforce-webhook-deliveries",
+      script: "dist/src/jobs/webhook-deliveries.js",
+      cwd: __dirname,
+      exec_mode: "fork",
+      instances: 1,
+      env: { NODE_ENV: "production" },
+      autorestart: false,
+      // Every minute: retries failed integration webhooks (no-op when none are pending).
+      cron_restart: "* * * * *",
+      time: true,
+      merge_logs: true,
+      out_file: "logs/webhook-deliveries-out.log",
+      error_file: "logs/webhook-deliveries-error.log"
     }
   ]
 };

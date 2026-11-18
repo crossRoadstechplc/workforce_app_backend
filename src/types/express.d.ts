@@ -30,6 +30,14 @@ declare global {
         boardMode: "ROOMS" | "PEOPLE" | "BOTH";
         permissions: string[];
       };
+      /** Set by authenticateApiKey for the external integration API. */
+      integration?: {
+        integrationId: string;
+        organizationId: string;
+        /** Empty = all offices. */
+        officeIds: string[];
+        name: string;
+      };
       tracker?: {
         workspaceId: string;
         staffMemberId: string;

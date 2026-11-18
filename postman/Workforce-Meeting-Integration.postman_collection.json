@@ -1,0 +1,340 @@
+{
+  "info": {
+    "name": "Workforce Meeting Booking API (integration)",
+    "description": "External API for booking meeting rooms for employees by employee code. Set baseUrl and apiKey in the collection variables. See docs/integrations/meeting-booking-api.md.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:4000/api/v1/integrations/meetings"
+    },
+    {
+      "key": "apiKey",
+      "value": "wfk_live_paste_your_key_here"
+    },
+    {
+      "key": "employeeCode",
+      "value": "SPX001"
+    },
+    {
+      "key": "roomId",
+      "value": ""
+    },
+    {
+      "key": "bookingId",
+      "value": ""
+    },
+    {
+      "key": "date",
+      "value": "2026-11-20"
+    },
+    {
+      "key": "startsAt",
+      "value": "2026-11-20T10:00:00+03:00"
+    },
+    {
+      "key": "endsAt",
+      "value": "2026-11-20T11:00:00+03:00"
+    },
+    {
+      "key": "externalId",
+      "value": "SPX-REQ-0001"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. List rooms",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-API-Key",
+            "value": "{{apiKey}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/rooms?page=1&pageSize=20",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "rooms"
+          ],
+          "query": [
+            {
+              "key": "page",
+              "value": "1"
+            },
+            {
+              "key": "pageSize",
+              "value": "20"
+            }
+          ]
+        },
+        "description": "Saves the first room id into {{roomId}}."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const rooms = pm.response.json().data.items;",
+              "if (rooms.length) pm.collectionVariables.set('roomId', rooms[0].id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Room availability",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-API-Key",
+            "value": "{{apiKey}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/rooms/{{roomId}}/availability?date={{date}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "rooms",
+            "{{roomId}}",
+            "availability"
+          ],
+          "query": [
+            {
+              "key": "date",
+              "value": "{{date}}"
+            }
+          ]
+        },
+        "description": ""
+      }
+    },
+    {
+      "name": "3. Check employee code",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-API-Key",
+            "value": "{{apiKey}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/employees/{{employeeCode}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "employees",
+            "{{employeeCode}}"
+          ]
+        },
+        "description": ""
+      }
+    },
+    {
+      "name": "4. Create booking",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "X-API-Key",
+            "value": "{{apiKey}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/bookings",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "bookings"
+          ]
+        },
+        "description": "Send twice with the same externalId: the second call returns 200 with the same booking.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"employeeCode\": \"{{employeeCode}}\",\n  \"roomId\": \"{{roomId}}\",\n  \"title\": \"Client meeting\",\n  \"notes\": \"Booked from Postman\",\n  \"startsAt\": \"{{startsAt}}\",\n  \"endsAt\": \"{{endsAt}}\",\n  \"externalId\": \"{{externalId}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const b = pm.response.json().data;",
+              "if (b && b.id) pm.collectionVariables.set('bookingId', b.id);",
+              "pm.test('201 new or 200 replay', () => pm.expect([200, 201]).to.include(pm.response.code));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. List my bookings",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-API-Key",
+            "value": "{{apiKey}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/bookings?employeeCode={{employeeCode}}&status=BOOKED",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "bookings"
+          ],
+          "query": [
+            {
+              "key": "employeeCode",
+              "value": "{{employeeCode}}"
+            },
+            {
+              "key": "status",
+              "value": "BOOKED"
+            }
+          ]
+        },
+        "description": ""
+      }
+    },
+    {
+      "name": "6. Get booking",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-API-Key",
+            "value": "{{apiKey}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/bookings/{{bookingId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "bookings",
+            "{{bookingId}}"
+          ]
+        },
+        "description": ""
+      }
+    },
+    {
+      "name": "7. Reschedule booking",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {
+            "key": "X-API-Key",
+            "value": "{{apiKey}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/bookings/{{bookingId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "bookings",
+            "{{bookingId}}"
+          ]
+        },
+        "description": "",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"startsAt\": \"2026-11-20T14:00:00+03:00\",\n  \"endsAt\": \"2026-11-20T15:00:00+03:00\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "8. Cancel booking",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "X-API-Key",
+            "value": "{{apiKey}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/bookings/{{bookingId}}/cancel",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "bookings",
+            "{{bookingId}}",
+            "cancel"
+          ]
+        },
+        "description": "",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"reason\": \"Client postponed\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      }
+    }
+  ]
+}
